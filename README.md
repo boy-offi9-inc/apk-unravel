@@ -2,7 +2,7 @@
   <img src="./assets/logo-wordmark.svg" alt="apk-unravel" width="480" />
 </p>
 
-# @boy-offi9-inc/apk-unravel
+# apk-unravel
 
 A CLI that wraps [`apktool`](https://apktool.org) and [`jadx`](https://github.com/skylot/jadx) into a single decompile pipeline, then parses the result into a readable summary: package info, permissions flagged by risk, exported components, and an optional heuristic scan for URLs/potential secrets across the decompiled source.
 
