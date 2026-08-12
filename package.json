@@ -1,0 +1,42 @@
+{
+  "name": "@boy-offi9-inc/apk-unravel",
+  "version": "1.0.0",
+  "description": "A CLI that wraps apktool + jadx into a single decompile pipeline, then parses the result into a readable summary (permissions, exported components, risk flags, optional string/URL scan).",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "bin": {
+    "apk-unravel": "./bin/apk-unravel.js"
+  },
+  "scripts": {
+    "start": "node bin/apk-unravel.js",
+    "postinstall": "node -e \"try{require('fs').chmodSync('bin/apk-unravel.js', 0o755)}catch(e){}\""
+  },
+  "keywords": [
+    "android",
+    "apk",
+    "reverse-engineering",
+    "apktool",
+    "jadx",
+    "decompile",
+    "static-analysis",
+    "cli",
+    "termux"
+  ],
+  "author": "Boy Offi9",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "boxen": "^5.1.2",
+    "commander": "^12.1.0",
+    "execa": "^5.1.1",
+    "fast-xml-parser": "^4.5.0",
+    "fs-extra": "^11.2.0",
+    "ora": "^5.4.1"
+  }
+}

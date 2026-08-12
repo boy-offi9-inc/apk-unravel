@@ -1,0 +1,6 @@
+node_modules/
+apk-unravel-out/
+*.apk
+npm-debug.log
+.DS_Store
+.apk-unravelrc.json
