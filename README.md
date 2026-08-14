@@ -2,6 +2,14 @@
   <img src="./assets/logo-wordmark.svg" alt="apk-unravel" width="480" />
 </p>
 
+<p align="center">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="Node >=18">
+  <img src="https://img.shields.io/badge/npm-%40boy--offi9--inc%2Fapk--unravel-CB3837?logo=npm&logoColor=white" alt="npm package">
+  <img src="https://img.shields.io/badge/termux-ready-3DDC84?logo=android&logoColor=white" alt="Termux ready">
+  <img src="https://img.shields.io/badge/CLI-commander-000000" alt="CLI: commander">
+</p>
+
 # apk-unravel
 
 A CLI that wraps [`apktool`](https://apktool.org) and [`jadx`](https://github.com/skylot/jadx) into a single decompile pipeline, then parses the result into a readable summary: package info, permissions flagged by risk, exported components, and an optional heuristic scan for URLs/potential secrets across the decompiled source.
@@ -200,12 +208,29 @@ apk-unravel/
 │   │   ├── stringScan.js     # heuristic URL/secret scan across decompiled output
 │   │   ├── report.js         # builds report.json + report.md
 │   │   ├── toolConfig.js     # resolves apktool/jadx/java paths
+│   │   ├── environment.js    # detects CI / Termux / legacy Windows console
+│   │   ├── outputPath.js     # picks default output dir (Termux shared storage aware)
+│   │   ├── banner.js         # environment-aware startup banner
 │   │   └── logger.js
 │   └── index.js               # commander CLI wiring
+├── assets/
+│   ├── logo-icon.svg
+│   └── logo-wordmark.svg
 ├── .github/workflows/ci.yml
 ├── LICENSE
 └── package.json
 ```
+
+---
+
+## Startup banner
+
+Every invocation (including `--help` and a bare `apk-unravel`) prints a short banner. It adapts to where it's running:
+
+- **Default terminal** — full rounded box, cleared screen
+- **CI** (`process.env.CI` set) — plain text lines, no box, no clear — log-friendly
+- **Termux** — same box, with a small mobile marker in the byline
+- **Legacy Windows console** (old `cmd.exe`, no Windows Terminal / terminal emulator) — ASCII-only box border, since Unicode box-drawing often renders broken there
 
 ---
 
