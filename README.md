@@ -5,7 +5,6 @@
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
   <img src="https://img.shields.io/badge/node-%3E%3D18-339933?logo=node.js&logoColor=white" alt="Node >=18">
-  <img src="https://img.shields.io/badge/npm-%40boy--offi9--inc%2Fapk--unravel-CB3837?logo=npm&logoColor=white" alt="npm package">
   <img src="https://img.shields.io/badge/termux-ready-3DDC84?logo=android&logoColor=white" alt="Termux ready">
   <img src="https://img.shields.io/badge/CLI-commander-000000" alt="CLI: commander">
 </p>
