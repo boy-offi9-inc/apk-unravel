@@ -9,6 +9,17 @@ function renderMarkdown(report) {
   lines.push(`**Generated:** ${report.generatedAt}`);
   lines.push("");
 
+  if (report.appIdentity) {
+    lines.push(`**App:** ${report.appIdentity.label || "—"}`);
+    if (report.appIdentity.iconOutputPath) {
+      const iconRel = path.basename(report.appIdentity.iconOutputPath);
+      lines.push(`**Icon:** \`${iconRel}\` (saved alongside this report)`);
+      lines.push("");
+      lines.push(`![app icon](./${iconRel})`);
+    }
+    lines.push("");
+  }
+
   lines.push(`## Package`);
   lines.push("");
   lines.push(`| Field | Value |`);
@@ -29,6 +40,37 @@ function renderMarkdown(report) {
     }
   } else {
     lines.push("_No permissions declared._");
+  }
+  lines.push("");
+
+  lines.push(`## Security flags (${report.manifest.security.flags.length})`);
+  lines.push("");
+  if (report.manifest.security.flags.length) {
+    lines.push(`| Flag | Severity | Detail |`);
+    lines.push(`| --- | --- | --- |`);
+    for (const f of report.manifest.security.flags) {
+      lines.push(`| \`${f.flag}\` | ${f.severity} | ${f.detail} |`);
+    }
+  } else {
+    lines.push("_No manifest-level security flags raised._");
+  }
+  lines.push("");
+  lines.push(
+    `_Cleartext traffic: ${report.manifest.security.usesCleartextTraffic ? "explicitly allowed" : "not explicitly allowed"} · Network security config: ${report.manifest.security.networkSecurityConfig ? `\`${report.manifest.security.networkSecurityConfig}\`` : "none referenced"}_`
+  );
+  lines.push("");
+
+  lines.push(`## Deep links / custom URI schemes (${report.manifest.deepLinks.length})`);
+  lines.push("");
+  if (report.manifest.deepLinks.length) {
+    lines.push(`| Component | URI pattern | Reachable externally |`);
+    lines.push(`| --- | --- | --- |`);
+    for (const l of report.manifest.deepLinks) {
+      const uri = `${l.scheme || "*"}://${l.host || "*"}${l.path || ""}`;
+      lines.push(`| \`${l.component}\` | \`${uri}\` | ${l.reachable ? "⚠️ yes" : "no"} |`);
+    }
+  } else {
+    lines.push("_No deep links / custom URI schemes declared._");
   }
   lines.push("");
 
@@ -61,17 +103,49 @@ function renderMarkdown(report) {
       }
     }
     lines.push("");
-    lines.push(`**Potential secrets flagged:** ${report.stringScan.potentialSecrets.length}`);
+    lines.push(`**Potential secrets flagged:** ${report.stringScan.potentialSecrets.length} unique`);
     if (report.stringScan.potentialSecrets.length) {
       lines.push("");
-      lines.push(`| Type | File | Match (truncated) |`);
-      lines.push(`| --- | --- | --- |`);
+      lines.push(`| Type | Seen in | Occurrences | Value (masked) |`);
+      lines.push(`| --- | --- | --- | --- |`);
       for (const s of report.stringScan.potentialSecrets.slice(0, 50)) {
-        const truncated = s.match.length > 60 ? s.match.slice(0, 60) + "…" : s.match;
-        lines.push(`| ${s.label} | \`${s.file}\` | \`${truncated}\` |`);
+        const fileList = s.files.map((f) => `\`${f}\``).join(", ") + (s.truncatedFileList ? ", …" : "");
+        lines.push(`| ${s.label} | ${fileList} | ${s.occurrences} | \`${s.masked}\` |`);
       }
       lines.push("");
-      lines.push("_Heuristic matches only — verify each before treating it as a real credential._");
+      lines.push(
+        "_Heuristic matches only — verify each before treating it as a real credential. Values are masked here; full values are in report.json._"
+      );
+    }
+    lines.push("");
+
+    if (report.stringScan.keywordMatches && report.stringScan.keywordMatches.length) {
+      lines.push(`**Custom keyword matches (--grep):** ${report.stringScan.keywordMatches.length} unique`);
+      lines.push("");
+      lines.push(`| Keyword | Seen in | Occurrences | Match |`);
+      lines.push(`| --- | --- | --- | --- |`);
+      for (const k of report.stringScan.keywordMatches.slice(0, 50)) {
+        const fileList = k.files.map((f) => `\`${f}\``).join(", ") + (k.truncatedFileList ? ", …" : "");
+        const truncatedMatch = k.match.length > 80 ? k.match.slice(0, 80) + "…" : k.match;
+        lines.push(`| \`${k.keyword}\` | ${fileList} | ${k.occurrences} | \`${truncatedMatch}\` |`);
+      }
+      lines.push("");
+    }
+  }
+
+  if (report.nativeLibs?.present) {
+    lines.push(`## Native libraries`);
+    lines.push("");
+    lines.push(`| ABI | .so files | 64-bit | Legacy |`);
+    lines.push(`| --- | --- | --- | --- |`);
+    for (const a of report.nativeLibs.abis) {
+      lines.push(`| \`${a.abi}\` | ${a.libraryCount} | ${a.is64Bit ? "✓" : "—"} | ${a.legacy ? "⚠️ yes" : "—"} |`);
+    }
+    if (report.nativeLibs.flags.length) {
+      lines.push("");
+      for (const f of report.nativeLibs.flags) {
+        lines.push(`- **[${f.severity}]** \`${f.flag}\` — ${f.detail}`);
+      }
     }
     lines.push("");
   }

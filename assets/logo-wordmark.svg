@@ -51,5 +51,4 @@
   <!-- wordmark -->
   <text x="164" y="82" font-family="'JetBrains Mono', 'Courier New', monospace" font-size="42" font-weight="700" fill="#f2eef7">apk<tspan fill="#ff3fa4">-</tspan>unravel</text>
   <text x="165" y="112" font-family="'JetBrains Mono', 'Courier New', monospace" font-size="16" fill="#7a7286">apktool + jadx, one clean pipeline</text>
-  <text x="165" y="134" font-family="'JetBrains Mono', 'Courier New', monospace" font-size="13" fill="#4d4658">boy-offi9-inc · nothing is black box</text>
 </svg>

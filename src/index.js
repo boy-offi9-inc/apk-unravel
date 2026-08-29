@@ -22,6 +22,11 @@ program
   .option("--no-smali", "with apktool, skip smali disassembly and only pull resources/manifest (faster)", false)
   .option("--deobfuscate", "enable jadx's built-in deobfuscation pass")
   .option("--strings", "scan decompiled source for URLs and potential secrets (heuristic, best-effort)")
+  .option(
+    "-g, --grep <keywords>",
+    'comma-separated custom keywords/regex to search for in decompiled source (e.g. "firebase,MyCompanyName,/api\\.example\\.[a-z]+/i"). Runs alongside --strings scanning.'
+  )
+  .option("--strings-out <path>", "write string/keyword scan findings to a separate file (.json or .csv, inferred from extension)")
   .action((apk, options) => {
     // commander maps --no-smali to options.smali === false
     decompileCommand(apk, { ...options, noSmali: options.smali === false });

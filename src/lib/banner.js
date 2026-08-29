@@ -25,7 +25,7 @@ function printBanner() {
 
   const title = chalk.bold.magentaBright("apk") + chalk.bold.white("-") + chalk.bold.cyanBright("unravel");
   const tagline = chalk.dim(`v${pkg.version} · apktool + jadx, one clean pipeline`);
-  const byline = chalk.dim(env === "termux" ? "boy-offi9-inc · nothing is black box · 📱 termux" : "boy-offi9-inc · nothing is black box");
+  const byline = chalk.dim(env === "termux" ? "boy-offi9-inc · nothing is black box · termux" : "boy-offi9-inc · nothing is black box");
 
   if (env === "ci") {
     console.log(`apk-unravel v${pkg.version}`);

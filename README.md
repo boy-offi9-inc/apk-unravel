@@ -39,10 +39,17 @@ Override any of this with `-o <dir>`.
 
 The report includes:
 
+- App display name and icon (resolved from manifest `@string`/`@mipmap` refs and saved as a standalone `icon.png` next to the report)
 - Package name, version, min/target SDK
 - Every declared permission, flagged `dangerous` or `normal`
 - Exported (or intent-filter-exposed) activities/services/receivers/providers — components reachable from outside the app
-- Optional (`--strings`): URLs and heuristically-flagged potential secrets found across the decompiled source
+- Deep links / custom URI schemes declared via `<intent-filter><data>` tags, with whether each one is actually externally reachable
+- Manifest-level security flags: `debuggable`, `allowBackup`, `usesCleartextTraffic`, referenced network security config
+- Deep links / custom URI schemes reachable from outside the app, per component
+- Native library (`lib/`) ABI coverage: which architectures ship, missing 64-bit support, legacy `armeabi` presence
+- Optional (`--strings`): URLs and heuristically-flagged potential secrets found across the decompiled source (Java/Kotlin/smali/XML/JS/properties/etc.) — deduplicated across files, placeholder values filtered out, and values masked in the human-readable report (full values stay in `report.json`)
+- Optional (`--grep <keywords>`): search the same decompiled source for your own comma-separated keywords or `/regex/flags` patterns — e.g. `--grep "firebase,MyCompanyName,/api\.internal\.[a-z]+/i"`. Works alongside or independently of `--strings`.
+- Optional (`--strings-out <path>`): write string/keyword findings to a standalone `.json` or `.csv` file, separate from the full report — handy for spreadsheet review or diffing against a previous scan.
 
 ---
 
@@ -182,55 +189,34 @@ apk-unravel decompile app.apk --deobfuscate
 # Also scan decompiled source for URLs and potential secrets
 apk-unravel decompile app.apk --strings
 
+# Search decompiled source for custom keywords/regex alongside the built-in scan
+apk-unravel decompile app.apk --strings --grep "firebase,MyCompanyName,/api\.internal\.[a-z]+/i"
+
+# Export string/keyword findings to a separate file for spreadsheet review, diffing, etc.
+apk-unravel decompile app.apk --strings --strings-out findings.csv
+
 # Check your apktool/jadx/java installation
 apk-unravel doctor
 ```
 
 ---
 
-## Project structure
+-feat: security analysis, app identity, and string scan improvements
 
-```
-apk-unravel/
-├── bin/
-│   └── apk-unravel.js       # CLI entry point
-├── src/
-│   ├── commands/
-│   │   ├── decompile.js      # main pipeline: apktool → jadx → parse → report
-│   │   └── doctor.js         # verifies apktool/jadx/java are reachable
-│   ├── lib/
-│   │   ├── runners/
-│   │   │   ├── apktool.js
-│   │   │   └── jadx.js
-│   │   ├── manifest.js       # parses apktool's decompiled AndroidManifest.xml
-│   │   ├── permissions.js    # dangerous-permission reference list
-│   │   ├── stringScan.js     # heuristic URL/secret scan across decompiled output
-│   │   ├── report.js         # builds report.json + report.md
-│   │   ├── toolConfig.js     # resolves apktool/jadx/java paths
-│   │   ├── environment.js    # detects CI / Termux / legacy Windows console
-│   │   ├── outputPath.js     # picks default output dir (Termux shared storage aware)
-│   │   ├── banner.js         # environment-aware startup banner
-│   │   └── logger.js
-│   └── index.js               # commander CLI wiring
-├── assets/
-│   ├── logo-icon.svg
-│   └── logo-wordmark.svg
-├── .github/workflows/ci.yml
-├── LICENSE
-└── package.json
-```
-
----
-
-## Startup banner
-
-Every invocation (including `--help` and a bare `apk-unravel`) prints a short banner. It adapts to where it's running:
-
-- **Default terminal** — full rounded box, cleared screen
-- **CI** (`process.env.CI` set) — plain text lines, no box, no clear — log-friendly
-- **Termux** — same box, with a small mobile marker in the byline
-- **Legacy Windows console** (old `cmd.exe`, no Windows Terminal / terminal emulator) — ASCII-only box border, since Unicode box-drawing often renders broken there
-
+- Fix exported-component detection to catch components with an
+  intent-filter but no explicit android:exported attribute
+- Add manifest-level security flags: debuggable, allowBackup,
+  usesCleartextTraffic, network security config
+- Resolve and export app label + icon (highest-density variant),
+  copied into the report output
+- Scan native library ABI coverage (lib/) — flags missing 64-bit
+  support, legacy armeabi, single-ABI-only builds
+- Expand string scan: more file types (kt/js/properties/etc.), more
+  secret patterns (private keys, Slack, Stripe, JWT), dedup by value,
+  placeholder filtering, masked values in report.md
+- Add -g/--grep for custom keyword/regex search and --strings-out to
+  export findings as standalone json/csv
+  
 ---
 
 ## Notes

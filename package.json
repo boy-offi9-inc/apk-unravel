@@ -1,6 +1,6 @@
 {
   "name": "@boy-offi9-inc/apk-unravel",
-  "version": "1.0.0",
+  "version": "1.5.0",
   "description": "A CLI that wraps apktool + jadx into a single decompile pipeline, then parses the result into a readable summary (permissions, exported components, risk flags, optional string/URL scan).",
   "main": "src/index.js",
   "type": "commonjs",
