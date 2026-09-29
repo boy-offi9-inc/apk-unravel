@@ -152,7 +152,10 @@ function renderMarkdown(report) {
 
   lines.push(`## Output locations`);
   lines.push("");
-  lines.push(`- apktool output: \`${report.outputPaths.apktool}\``);
+  if (report.manifestSource === "jadx") {
+    lines.push("- manifest/resources read from jadx's decoded output (`--jadx-only`)");
+  }
+  if (report.outputPaths.apktool) lines.push(`- apktool output: \`${report.outputPaths.apktool}\``);
   if (report.outputPaths.jadx) lines.push(`- jadx output: \`${report.outputPaths.jadx}\``);
   lines.push("");
 

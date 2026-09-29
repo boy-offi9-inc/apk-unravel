@@ -49,8 +49,20 @@ async function decompileCommand(apkPath, options) {
   logger.title(`apk-unravel — ${path.basename(resolvedApk)}`);
   logger.dim(`Output: ${outRoot}\n`);
 
+  if (options.apktoolOnly && options.jadxOnly) {
+    logger.error("--apktool-only and --jadx-only can't be combined — pick one (or neither to run both).");
+    process.exitCode = 1;
+    return;
+  }
+
   const skipApktool = options.jadxOnly;
   const skipJadx = options.apktoolOnly;
+
+  // Manifest, resources (label/icon) and lib/ come from apktool when it ran.
+  // With --jadx-only, jadx has already decoded the same things into
+  // <jadxOut>/resources (AndroidManifest.xml, res/, lib/), so read them from
+  // there and still produce a full report.
+  const resourceRoot = skipApktool ? path.join(jadxOut, "resources") : apktoolOut;
 
   if (!skipApktool) {
     const spinner = ora("Running apktool (resources, manifest, smali)...").start();
@@ -91,10 +103,10 @@ async function decompileCommand(apkPath, options) {
 
   let manifest = null;
   let appIdentity = null;
-  if (!skipApktool) {
+  {
     const spinner = ora("Parsing AndroidManifest.xml...").start();
     try {
-      manifest = await parseManifest(apktoolOut);
+      manifest = await parseManifest(resourceRoot);
       spinner.succeed(
         `Manifest parsed — ${manifest.permissions.length} permissions, ${manifest.dangerousPermissions.length} flagged dangerous`
       );
@@ -106,7 +118,7 @@ async function decompileCommand(apkPath, options) {
     if (manifest) {
       const identitySpinner = ora("Resolving app label and icon...").start();
       try {
-        appIdentity = await resolveAppIdentity(apktoolOut, outRoot, manifest.appLabelRef, manifest.appIconRef);
+        appIdentity = await resolveAppIdentity(resourceRoot, outRoot, manifest.appLabelRef, manifest.appIconRef);
         identitySpinner.succeed(
           appIdentity.iconOutputPath
             ? `App identity resolved — "${appIdentity.label || "—"}" (icon saved)`
@@ -150,10 +162,10 @@ async function decompileCommand(apkPath, options) {
   }
 
   let nativeLibs = null;
-  if (!skipApktool) {
+  {
     const spinner = ora("Scanning native libraries (lib/)...").start();
     try {
-      nativeLibs = await scanNativeLibs(apktoolOut);
+      nativeLibs = await scanNativeLibs(resourceRoot);
       spinner.succeed(
         nativeLibs.present
           ? `Native libs found — ${nativeLibs.abis.map((a) => a.abi).join(", ")}`
@@ -173,6 +185,7 @@ async function decompileCommand(apkPath, options) {
       appIdentity,
       stringScan,
       nativeLibs,
+      manifestSource: skipApktool ? "jadx" : "apktool",
       outputPaths: {
         apktool: skipApktool ? null : apktoolOut,
         jadx: skipJadx ? null : jadxOut,
@@ -222,7 +235,8 @@ async function decompileCommand(apkPath, options) {
       logger.dim(`  (in shared storage — visible from your file manager under Internal Storage/apk-unravel-out)`);
     }
   } else {
-    logger.warn("No manifest data available — skipped report generation (apktool step was skipped or failed).");
+    logger.warn("No manifest data available — skipped report generation (see the manifest parsing error above).");
+    process.exitCode = 1;
   }
 }
 

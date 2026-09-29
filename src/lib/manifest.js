@@ -23,7 +23,7 @@ function attr(node, name) {
 async function parseManifest(apktoolOutDir) {
   const manifestPath = path.join(apktoolOutDir, "AndroidManifest.xml");
   if (!(await fs.pathExists(manifestPath))) {
-    throw new Error(`AndroidManifest.xml not found at ${manifestPath} — did the apktool step run successfully?`);
+    throw new Error(`AndroidManifest.xml not found at ${manifestPath} — did the apktool/jadx decompile step run successfully?`);
   }
 
   const xml = await fs.readFile(manifestPath, "utf8");
@@ -123,7 +123,8 @@ async function parseManifest(apktoolOutDir) {
 
   // Application-level security flags — common, cheap-to-check misconfigurations
   // that are worth surfacing in any static-analysis pass.
-  const debuggable = attr(appNode, "debuggable") === "true";  const allowBackupRaw = attr(appNode, "allowBackup");
+  const debuggable = attr(appNode, "debuggable") === "true";
+  const allowBackupRaw = attr(appNode, "allowBackup");
   // allowBackup defaults to true when the attribute is absent, so treat
   // "absent" the same as "true" for flagging purposes.
   const allowBackup = allowBackupRaw !== "false";
