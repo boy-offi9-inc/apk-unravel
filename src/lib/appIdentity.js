@@ -58,18 +58,20 @@ async function resolveStringRef(resDir, resourceName) {
   return null;
 }
 
+const RASTER_EXTS = new Set([".png", ".webp", ".jpg", ".jpeg"]);
+const MAX_ICON_REF_DEPTH = 3;
+
 /**
- * Resolves a resource reference like "@mipmap/ic_launcher" or "@drawable/icon"
- * to an actual file on disk under res/, preferring the highest-density
- * variant available (icons are commonly duplicated per-density).
+ * Lists every res/<type>[-qualifier]/<name>.* file, best density first.
  */
-async function resolveDrawableRef(resDir, resourceType, resourceName) {
-  if (!(await fs.pathExists(resDir))) return null;
+async function findResourceFiles(resDir, resourceType, resourceName) {
+  if (!(await fs.pathExists(resDir))) return [];
   const entries = await fs.readdir(resDir);
   const candidateDirs = entries
     .filter((e) => e === resourceType || e.startsWith(`${resourceType}-`))
     .sort((a, b) => densityRank(a) - densityRank(b));
 
+  const found = [];
   for (const dir of candidateDirs) {
     const dirPath = path.join(resDir, dir);
     let files;
@@ -78,12 +80,59 @@ async function resolveDrawableRef(resDir, resourceType, resourceName) {
     } catch {
       continue;
     }
-    const match = files.find((f) => path.basename(f, path.extname(f)) === resourceName);
-    if (match) {
-      return path.join(dirPath, match);
+    for (const f of files) {
+      if (path.basename(f, path.extname(f)) === resourceName) {
+        found.push({ path: path.join(dirPath, f), ext: path.extname(f).toLowerCase() });
+      }
     }
   }
-  return null;
+  return found;
+}
+
+/**
+ * Adaptive icons (<adaptive-icon> XML) have no bitmap of their own — the
+ * pixels live in the drawable their <foreground> points at. Returns that
+ * "@type/name" reference, or null if the XML isn't an adaptive icon.
+ */
+async function adaptiveForegroundRef(xmlPath) {
+  try {
+    const parsed = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "" }).parse(await fs.readFile(xmlPath, "utf8"));
+    const fg = parsed["adaptive-icon"]?.foreground;
+    if (!fg || typeof fg !== "object") return null;
+    return fg["android:drawable"] || fg.inset?.["android:drawable"] || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolves a resource reference like "@mipmap/ic_launcher" or "@drawable/icon"
+ * to a file under res/. Raster images (png/webp/jpg) always win over XML, and
+ * among rasters the highest-density variant wins. If only XML exists and it's
+ * an adaptive icon, follows its <foreground> to a raster (a few levels deep).
+ *
+ * Returns { path, kind: "raster" | "xml" } — "xml" means nothing bitmap-like
+ * could be found, so the caller shouldn't treat `path` as a copyable icon —
+ * or null if the resource doesn't exist at all.
+ */
+async function resolveDrawableRef(resDir, resourceType, resourceName, depth = 0) {
+  const files = await findResourceFiles(resDir, resourceType, resourceName);
+
+  const raster = files.find((f) => RASTER_EXTS.has(f.ext));
+  if (raster) return { path: raster.path, kind: "raster" };
+
+  const xml = files.find((f) => f.ext === ".xml");
+  if (!xml) return null;
+
+  if (depth < MAX_ICON_REF_DEPTH) {
+    const fgRef = await adaptiveForegroundRef(xml.path);
+    const m = fgRef && /^@(\w+)\/(.+)$/.exec(fgRef);
+    if (m) {
+      const viaForeground = await resolveDrawableRef(resDir, m[1], m[2], depth + 1);
+      if (viaForeground && viaForeground.kind === "raster") return viaForeground;
+    }
+  }
+  return { path: xml.path, kind: "xml" };
 }
 
 /**
@@ -103,6 +152,7 @@ async function resolveAppIdentity(apktoolOutDir, outRoot, appLabelRef, appIconRe
   let label = appLabelRef || null;
   let iconSourcePath = null;
   let iconOutputPath = null;
+  let iconIsRaster = false;
 
   if (appLabelRef && appLabelRef.startsWith("@string/")) {
     const resolved = await resolveStringRef(resDir, appLabelRef.replace("@string/", ""));
@@ -112,19 +162,25 @@ async function resolveAppIdentity(apktoolOutDir, outRoot, appLabelRef, appIconRe
   if (appIconRef && appIconRef.startsWith("@")) {
     const [resourceType, resourceName] = appIconRef.slice(1).split("/");
     if (resourceType && resourceName) {
-      iconSourcePath = await resolveDrawableRef(resDir, resourceType, resourceName);
+      const resolved = await resolveDrawableRef(resDir, resourceType, resourceName);
+      if (resolved) {
+        iconSourcePath = resolved.path;
+        // Only bitmaps are copied out as icon.<ext>; a bare XML vector/adaptive
+        // icon with no raster behind it isn't viewable as an image, so we
+        // report where it lives (iconSourcePath) but don't fake an icon file.
+        iconIsRaster = resolved.kind === "raster";
+      }
     }
   }
 
-  if (iconSourcePath) {
+  if (iconSourcePath && iconIsRaster) {
     const ext = path.extname(iconSourcePath) || ".png";
     const dest = path.join(outRoot, `icon${ext}`);
     try {
       await fs.copy(iconSourcePath, dest, { overwrite: true });
       iconOutputPath = dest;
     } catch {
-      // Non-fatal — vector drawables (.xml) or unusual formats can fail to
-      // copy meaningfully; the report just omits the icon path in that case.
+      // Non-fatal — the report just omits the icon path in that case.
       iconOutputPath = null;
     }
   }
@@ -132,4 +188,4 @@ async function resolveAppIdentity(apktoolOutDir, outRoot, appLabelRef, appIconRe
   return { label, iconSourcePath, iconOutputPath };
 }
 
-module.exports = { resolveAppIdentity };
+module.exports = { resolveAppIdentity, resolveDrawableRef };
