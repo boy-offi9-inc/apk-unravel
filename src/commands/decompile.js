@@ -1,6 +1,6 @@
 const path = require("path");
 const fs = require("fs-extra");
-const ora = require("ora");
+const { createSpinner } = require("../lib/output");
 const logger = require("../lib/logger");
 const { runApktool } = require("../lib/runners/apktool");
 const { runJadx } = require("../lib/runners/jadx");
@@ -9,10 +9,14 @@ const { resolveAppIdentity } = require("../lib/appIdentity");
 const { scanNativeLibs } = require("../lib/nativeLibs");
 const { scanStrings, parseKeywords } = require("../lib/stringScan");
 const { writeStringsExport } = require("../lib/stringsExport");
-const { writeReport } = require("../lib/report");
+const { writeReport, toPublicReport } = require("../lib/report");
 const { resolveDefaultOutputDir, isTermux } = require("../lib/outputPath");
 
 async function decompileCommand(apkPath, options) {
+  const quiet = Boolean(options.json || options.quiet);
+  logger.setQuiet(quiet);
+  const spin = (text) => createSpinner(text, { quiet });
+
   const resolvedApk = path.resolve(apkPath);
 
   if (!(await fs.pathExists(resolvedApk))) {
@@ -65,7 +69,7 @@ async function decompileCommand(apkPath, options) {
   const resourceRoot = skipApktool ? path.join(jadxOut, "resources") : apktoolOut;
 
   if (!skipApktool) {
-    const spinner = ora("Running apktool (resources, manifest, smali)...").start();
+    const spinner = spin("Running apktool (resources, manifest, smali)...").start();
     try {
       await runApktool(resolvedApk, apktoolOut, { noSrc: options.noSmali });
       spinner.succeed("apktool decompile complete");
@@ -81,7 +85,7 @@ async function decompileCommand(apkPath, options) {
   }
 
   if (!skipJadx) {
-    const spinner = ora("Running jadx (Java source decompile)...").start();
+    const spinner = spin("Running jadx (Java source decompile)...").start();
     try {
       const jadxResult = await runJadx(resolvedApk, jadxOut, { deobfuscate: options.deobfuscate });
       if (jadxResult.partial) {
@@ -104,7 +108,7 @@ async function decompileCommand(apkPath, options) {
   let manifest = null;
   let appIdentity = null;
   {
-    const spinner = ora("Parsing AndroidManifest.xml...").start();
+    const spinner = spin("Parsing AndroidManifest.xml...").start();
     try {
       manifest = await parseManifest(resourceRoot);
       spinner.succeed(
@@ -116,7 +120,7 @@ async function decompileCommand(apkPath, options) {
     }
 
     if (manifest) {
-      const identitySpinner = ora("Resolving app label and icon...").start();
+      const identitySpinner = spin("Resolving app label and icon...").start();
       try {
         appIdentity = await resolveAppIdentity(resourceRoot, outRoot, manifest.appLabelRef, manifest.appIconRef);
         identitySpinner.succeed(
@@ -139,7 +143,7 @@ async function decompileCommand(apkPath, options) {
 
   if (options.strings || keywordMatchers.length) {
     const scanRoot = !skipJadx ? jadxOut : apktoolOut;
-    const spinner = ora("Scanning decompiled source for URLs, potential secrets, and keywords...").start();
+    const spinner = spin("Scanning decompiled source for URLs, potential secrets, and keywords...").start();
     try {
       stringScan = await scanStrings(scanRoot, { keywords: keywordMatchers });
       const parts = [`${stringScan.urls.length} URLs`, `${stringScan.potentialSecrets.length} unique secrets flagged`];
@@ -163,7 +167,7 @@ async function decompileCommand(apkPath, options) {
 
   let nativeLibs = null;
   {
-    const spinner = ora("Scanning native libraries (lib/)...").start();
+    const spinner = spin("Scanning native libraries (lib/)...").start();
     try {
       nativeLibs = await scanNativeLibs(resourceRoot);
       spinner.succeed(
@@ -227,12 +231,18 @@ async function decompileCommand(apkPath, options) {
         logger.dim(`  ⚠ [${f.severity}] ${f.flag} — ${f.detail}`);
       }
     }
-    console.log();
+    logger.blank();
     logger.success(`Full report written to:`);
     logger.dim(`  ${mdPath}`);
     logger.dim(`  ${jsonPath}`);
     if (usedSharedStorage) {
       logger.dim(`  (in shared storage — visible from your file manager under Internal Storage/apk-unravel-out)`);
+    }
+
+    if (options.json) {
+      process.stdout.write(JSON.stringify(toPublicReport(report), null, 2) + "\n");
+    } else if (quiet) {
+      console.log(jsonPath);
     }
   } else {
     logger.warn("No manifest data available — skipped report generation (see the manifest parsing error above).");

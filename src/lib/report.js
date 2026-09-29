@@ -170,4 +170,20 @@ async function writeReport(report, outDir) {
   return { jsonPath, mdPath };
 }
 
-module.exports = { writeReport, renderMarkdown };
+/**
+ * Copy of the report that is safe to print to stdout / pipe elsewhere: the
+ * full (unmasked) value of each potential secret is dropped, matching what
+ * report.md and --strings-out already do. Only report.json on disk keeps them.
+ */
+function toPublicReport(report) {
+  if (!report.stringScan) return report;
+  return {
+    ...report,
+    stringScan: {
+      ...report.stringScan,
+      potentialSecrets: report.stringScan.potentialSecrets.map(({ match, ...rest }) => rest),
+    },
+  };
+}
+
+module.exports = { writeReport, renderMarkdown, toPublicReport };

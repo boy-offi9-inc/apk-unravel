@@ -4,8 +4,9 @@ const decompileCommand = require("./commands/decompile");
 const doctorCommand = require("./commands/doctor");
 const { printBanner } = require("./lib/banner");
 const logger = require("./lib/logger");
+const { isQuietArgv } = require("./lib/output");
 
-printBanner();
+if (!isQuietArgv(process.argv)) printBanner();
 
 const program = new Command();
 
@@ -27,6 +28,8 @@ program
     "-g, --grep <keywords>",
     'comma-separated custom keywords/regex to search for in decompiled source (e.g. "firebase,MyCompanyName,/api\\.example\\.[a-z]+/i"). Runs alongside --strings scanning.'
   )
+  .option("--json", "print the analysis report as JSON on stdout (implies --quiet; secret values stay masked)")
+  .option("-q, --quiet", "no banner, spinners or summary — print only the path to report.json (warnings/errors still go to stderr)")
   .option("--strings-out <path>", "write string/keyword scan findings to a separate file (.json or .csv, inferred from extension)")
   .action((apk, options) => {
     // commander maps --no-smali to options.smali === false.
