@@ -78,16 +78,65 @@ function compileKeyword(raw) {
 }
 
 /**
- * Splits a --grep CLI value ("firebase,MyCo,/api\.foo\.[a-z]+/i") into
+ * Splits a raw --grep value into individual keyword terms on commas, except
+ * that commas inside a /regex/flags literal are kept intact — so
+ * "/a{1,3}/i,foo" is two terms, not three. A "/" only closes a regex literal
+ * when it is unescaped, outside a [...] class, and followed by optional flags
+ * and then a comma or the end of the input; anything that doesn't fit that
+ * shape falls back to plain comma splitting.
+ */
+function splitKeywords(raw) {
+  const parts = [];
+  const n = raw.length;
+  let i = 0;
+
+  while (i < n) {
+    while (i < n && /\s/.test(raw[i])) i++;
+    if (i >= n) break;
+
+    let end = -1;
+    if (raw[i] === "/") {
+      let inClass = false;
+      for (let j = i + 1; j < n; j++) {
+        const c = raw[j];
+        if (c === "\\") {
+          j++; // skip the escaped character
+        } else if (c === "[") {
+          inClass = true;
+        } else if (c === "]") {
+          inClass = false;
+        } else if (c === "/" && !inClass) {
+          const flags = /^[a-z]*/i.exec(raw.slice(j + 1))[0];
+          const after = j + 1 + flags.length;
+          if (/^\s*(,|$)/.test(raw.slice(after))) {
+            end = after;
+            break;
+          }
+        }
+      }
+    }
+
+    if (end === -1) {
+      const comma = raw.indexOf(",", i);
+      end = comma === -1 ? n : comma;
+    }
+
+    const token = raw.slice(i, end).trim();
+    if (token) parts.push(token);
+    i = end + 1; // step over the separating comma
+  }
+
+  return parts;
+}
+
+/**
+ * Splits a --grep CLI value ("firebase,MyCo,/api\\.foo\\.[a-z]+/i") into
  * compiled keyword matchers, separating out any that failed to compile so
  * the caller can warn about them without losing the valid ones.
  */
 function parseKeywords(rawValue) {
   if (!rawValue) return { compiled: [], invalid: [] };
-  const parts = rawValue
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const parts = splitKeywords(rawValue);
   const compiled = [];
   const invalid = [];
   for (const part of parts) {
@@ -219,4 +268,4 @@ async function scanStrings(rootDir, { maxMatchesPerCategory = 200, keywords = []
   };
 }
 
-module.exports = { scanStrings, parseKeywords };
+module.exports = { scanStrings, parseKeywords, splitKeywords };
