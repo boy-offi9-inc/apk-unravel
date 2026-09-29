@@ -9,7 +9,8 @@
   },
   "scripts": {
     "start": "node bin/apk-unravel.js",
-    "postinstall": "node -e \"try{require('fs').chmodSync('bin/apk-unravel.js', 0o755)}catch(e){}\""
+    "postinstall": "node -e \"try{require('fs').chmodSync('bin/apk-unravel.js', 0o755)}catch(e){}\"",
+    "test": "node --test"
   },
   "keywords": [
     "android",
