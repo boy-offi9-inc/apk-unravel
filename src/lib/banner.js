@@ -12,10 +12,10 @@ let printed = false;
  * `--help` and a bare `apk-unravel` with no subcommand.
  *
  * Styling adapts per environment:
- *   - ci:              plain text, no box, no clear (log output, not a terminal)
+ *   - ci:              plain text, no box (log output, not a terminal)
  *   - windows-legacy:  ASCII-only box border (old cmd.exe can't render Unicode box-drawing)
  *   - termux:          same rounded box as default, with a small mobile marker in the byline
- *   - default:         full rounded box + clear
+ *   - default:         full rounded box
  */
 function printBanner() {
   if (printed) return;
@@ -31,10 +31,6 @@ function printBanner() {
     console.log(`apk-unravel v${pkg.version}`);
     console.log("apktool + jadx, one clean pipeline\n");
     return;
-  }
-
-  if (process.stdout.isTTY) {
-    process.stdout.write("\x1Bc");
   }
 
   const content = `${title}\n${tagline}\n${byline}`;
