@@ -71,8 +71,13 @@ async function decompileCommand(apkPath, options) {
   if (!skipJadx) {
     const spinner = ora("Running jadx (Java source decompile)...").start();
     try {
-      await runJadx(resolvedApk, jadxOut, { deobfuscate: options.deobfuscate });
-      spinner.succeed("jadx decompile complete");
+      const jadxResult = await runJadx(resolvedApk, jadxOut, { deobfuscate: options.deobfuscate });
+      if (jadxResult.partial) {
+        spinner.warn("jadx finished with errors — some classes could not be decompiled (output kept)");
+        logger.dim(`  ${jadxResult.warning}`);
+      } else {
+        spinner.succeed("jadx decompile complete");
+      }
     } catch (err) {
       spinner.fail("jadx failed");
       logger.error(err.shortMessage || err.message);
