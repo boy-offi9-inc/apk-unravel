@@ -20,7 +20,7 @@ program
   .description("Run apktool + jadx on an APK and generate a readable analysis report")
   .option("-o, --output <dir>", "output directory (default: ./apk-unravel-out/<apk-name>)")
   .option("--apktool-only", "only run apktool (skip jadx)")
-  .option("--jadx-only", "only run jadx (skip apktool + manifest report)")
+  .option("--jadx-only", "only run jadx (skip apktool; manifest and report are built from jadx's decoded output)")
   .option("--no-smali", "with apktool, skip smali disassembly and only pull resources/manifest (faster)")
   .option("--deobfuscate", "enable jadx's built-in deobfuscation pass")
   .option("--strings", "scan decompiled source for URLs and potential secrets (heuristic, best-effort)")

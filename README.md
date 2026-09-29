@@ -45,7 +45,6 @@ The report includes:
 - Exported (or intent-filter-exposed) activities/services/receivers/providers — components reachable from outside the app
 - Deep links / custom URI schemes declared via `<intent-filter><data>` tags, with whether each one is actually externally reachable
 - Manifest-level security flags: `debuggable`, `allowBackup`, `usesCleartextTraffic`, referenced network security config
-- Deep links / custom URI schemes reachable from outside the app, per component
 - Native library (`lib/`) ABI coverage: which architectures ship, missing 64-bit support, legacy `armeabi` presence
 - Optional (`--strings`): URLs and heuristically-flagged potential secrets found across the decompiled source (Java/Kotlin/smali/XML/JS/properties/etc.) — deduplicated across files, placeholder values filtered out, and values masked in the human-readable report (full values stay in `report.json`)
 - Optional (`--grep <keywords>`): search the same decompiled source for your own comma-separated keywords or `/regex/flags` patterns — e.g. `--grep "firebase,MyCompanyName,/api\.internal\.[a-z]+/i"`. Works alongside or independently of `--strings`.
@@ -159,7 +158,7 @@ npm install -g @boy-offi9-inc/apk-unravel
 Or run locally without a global install:
 
 ```bash
-git clone <this repo>
+git clone https://github.com/boy-offi9-inc/apk-unravel.git
 cd apk-unravel
 npm install
 npm link   # makes `apk-unravel` available globally, pointing at this checkout
@@ -195,28 +194,18 @@ apk-unravel decompile app.apk --strings --grep "firebase,MyCompanyName,/api\.int
 # Export string/keyword findings to a separate file for spreadsheet review, diffing, etc.
 apk-unravel decompile app.apk --strings --strings-out findings.csv
 
+# Machine-readable: no banner/spinners, report JSON on stdout (secret values stay masked)
+apk-unravel decompile app.apk --json --strings | jq '.manifest.security.flags'
+
+# Quiet: print only the path to report.json (handy in scripts)
+REPORT=$(apk-unravel decompile app.apk --quiet)
+
 # Check your apktool/jadx/java installation
 apk-unravel doctor
 ```
 
----
+With `--json` / `--quiet`, warnings and errors still go to **stderr** and the exit code still reflects failure, so `apk-unravel ... --json > report.json` never mixes diagnostics into the data.
 
--feat: security analysis, app identity, and string scan improvements
-
-- Fix exported-component detection to catch components with an
-  intent-filter but no explicit android:exported attribute
-- Add manifest-level security flags: debuggable, allowBackup,
-  usesCleartextTraffic, network security config
-- Resolve and export app label + icon (highest-density variant),
-  copied into the report output
-- Scan native library ABI coverage (lib/) — flags missing 64-bit
-  support, legacy armeabi, single-ABI-only builds
-- Expand string scan: more file types (kt/js/properties/etc.), more
-  secret patterns (private keys, Slack, Stripe, JWT), dedup by value,
-  placeholder filtering, masked values in report.md
-- Add -g/--grep for custom keyword/regex search and --strings-out to
-  export findings as standalone json/csv
-  
 ---
 
 ## Notes
@@ -225,6 +214,19 @@ apk-unravel doctor
 - The `--strings` scan is a best-effort heuristic (regex-based), not a guarantee — always verify a flagged match before treating it as a real credential.
 - "Exported" components are flagged based on an explicit `android:exported="true"` attribute *or* the presence of an `<intent-filter>` without an explicit `exported="false"` — a very common real-world misconfiguration worth a manual look.
 - Only analyze APKs you own or have explicit permission to inspect.
+
+- **`--jadx-only`** builds the same report as a full run: the manifest, app label/icon and native-lib scan are read from jadx's own decoded output (`jadx/resources/`) when apktool is skipped.
+- **jadx exits non-zero on partial failures.** If some classes can't be decompiled but jadx still wrote output, apk-unravel prints a warning and carries on instead of aborting. A run that produced nothing still fails.
+- Set `APK_UNRAVEL_DEBUG=1` to print a stack trace for unexpected errors.
+
+## Development
+
+```bash
+npm install
+npm test        # node:test suite; no extra dev dependencies
+```
+
+The end-to-end tests run the real CLI against small fake `apktool`/`jadx` scripts, so they need neither Java nor the real tools (POSIX shell required).
 
 ## License
 

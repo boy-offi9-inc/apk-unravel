@@ -16,8 +16,8 @@ function attr(node, name) {
 }
 
 /**
- * Parses <output>/apktool/AndroidManifest.xml (apktool's decompiled, human-readable
- * manifest) into a structured summary: package info, SDK levels, permissions
+ * Parses the decoded AndroidManifest.xml in the given directory (apktool's output
+ * root, or <jadx out>/resources under --jadx-only) into a structured summary: package info, SDK levels, permissions
  * (flagged by risk), and exported components.
  */
 async function parseManifest(apktoolOutDir) {
