@@ -3,6 +3,7 @@ const pkg = require("../package.json");
 const decompileCommand = require("./commands/decompile");
 const doctorCommand = require("./commands/doctor");
 const { printBanner } = require("./lib/banner");
+const logger = require("./lib/logger");
 
 printBanner();
 
@@ -28,8 +29,10 @@ program
   )
   .option("--strings-out <path>", "write string/keyword scan findings to a separate file (.json or .csv, inferred from extension)")
   .action((apk, options) => {
-    // commander maps --no-smali to options.smali === false
-    decompileCommand(apk, { ...options, noSmali: options.smali === false });
+    // commander maps --no-smali to options.smali === false.
+    // Return the promise so parseAsync() actually waits for (and surfaces
+    // errors from) the whole pipeline.
+    return decompileCommand(apk, { ...options, noSmali: options.smali === false });
   });
 
 program
@@ -37,4 +40,8 @@ program
   .description("Check that apktool, jadx, and Java are installed and reachable")
   .action(doctorCommand);
 
-program.parseAsync(process.argv);
+program.parseAsync(process.argv).catch((err) => {
+  logger.error(err.shortMessage || err.message || String(err));
+  if (process.env.APK_UNRAVEL_DEBUG && err.stack) logger.dim(err.stack);
+  process.exitCode = 1;
+});
