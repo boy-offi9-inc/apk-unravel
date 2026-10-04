@@ -140,3 +140,34 @@ test("garbage input: clear error on stderr, exit 1, no tools run", posix, (t) =>
   assert.match(r.stderr, /not an APK\/ZIP/);
   assert.ok(!fs.existsSync(argsFile), "apktool must not have been invoked");
 });
+
+test("--jadx-args / --jadx-java-opts reach jadx; layout-changing flags are rejected", posix, (t) => {
+  const dir = tmpdir();
+  t.after(() => rmrf(dir));
+  const rec = path.join(dir, "rec.txt");
+  const manifestSrc = write(path.join(dir, "m.xml"), MANIFEST);
+  const jadx = fakeBin(
+    path.join(dir, "jadx"),
+    `OUT="$2"; mkdir -p "$OUT/sources" "$OUT/resources"; cp "${manifestSrc}" "$OUT/resources/AndroidManifest.xml"
+printf '%s\\n' "$@" > "${rec}"; printf 'JAVA_OPTS=%s\\n' "$JAVA_OPTS" >> "${rec}"`
+  );
+  const apk = write(path.join(dir, "app.apk"), makeApk());
+  const env = { ...process.env, CI: "1", JADX_PATH: jadx };
+  delete env.JAVA_OPTS;
+  const go = (...extra) => spawnSync(process.execPath, [BIN, "decompile", apk, "--jadx-only", "-o", path.join(dir, "out"), ...extra], { env, encoding: "utf8" });
+
+  const ok = go("--jadx-args", '--threads-count 1 --rename-flags "valid, printable"', "--jadx-java-opts", "-Xmx6g");
+  assert.equal(ok.status, 0, ok.stderr + ok.stdout);
+  const lines = fs.readFileSync(rec, "utf8").trim().split("\n");
+  assert.deepEqual(lines.slice(2, 6), ["--threads-count", "1", "--rename-flags", "valid, printable"]);
+  assert.equal(lines[lines.length - 1], "JAVA_OPTS=-Xmx6g");
+
+  for (const bad of ["-d /tmp/elsewhere", "--output-dir=/x", "-ds src", "--export-gradle"]) {
+    const r = go("--jadx-args", bad);
+    assert.equal(r.status, 1, bad);
+    assert.match(r.stderr, /--jadx-args can't include/, bad);
+  }
+  const unterminated = go("--jadx-args", '--x "oops');
+  assert.equal(unterminated.status, 1);
+  assert.match(unterminated.stderr, /unterminated double quote/);
+});

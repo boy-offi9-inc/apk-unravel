@@ -16,7 +16,9 @@ async function hasOutput(outDir) {
 
 /**
  * Runs jadx to decompile the APK's bytecode into readable Java source.
- * opts.deobfuscate enables jadx's built-in deobfuscation pass.
+ * opts.deobfuscate enables jadx's built-in deobfuscation pass; opts.extraArgs
+ * (array) is passed through to jadx before the APK path; opts.javaOpts sets
+ * JAVA_OPTS for the jadx process.
  *
  * jadx exits non-zero whenever *some* classes fail to decompile, yet it still
  * writes everything it managed to recover. That's the normal case on real-world
@@ -29,10 +31,19 @@ async function runJadx(apkPath, outDir, opts = {}) {
 
   const args = ["-d", outDir];
   if (opts.deobfuscate) args.push("--deobf");
+  if (opts.extraArgs && opts.extraArgs.length) args.push(...opts.extraArgs);
   args.push(apkPath);
 
+  // JVM options (e.g. "-Xmx6g" for big apps that hit OutOfMemoryError). jadx's
+  // launcher appends JAVA_OPTS after its own defaults, so these win. Anything
+  // already in the caller's JAVA_OPTS is kept.
+  const execOpts = {};
+  if (opts.javaOpts) {
+    execOpts.env = { JAVA_OPTS: [process.env.JAVA_OPTS, opts.javaOpts].filter(Boolean).join(" ") };
+  }
+
   try {
-    await execa(jadx.command, args);
+    await execa(jadx.command, args, execOpts);
     return { partial: false };
   } catch (err) {
     if (typeof err.exitCode === "number" && (await hasOutput(outDir))) {

@@ -12,6 +12,26 @@ const { writeStringsExport } = require("../lib/stringsExport");
 const { writeReport, toPublicReport } = require("../lib/report");
 const { resolveDefaultOutputDir, isTermux } = require("../lib/outputPath");
 const { prepareInput, InputError } = require("../lib/apkInput");
+const { splitArgs } = require("../lib/shellSplit");
+
+// jadx flags that relocate or reshape its output; the report/scan stages rely
+// on the default <out>/jadx/{sources,resources} layout.
+const JADX_LAYOUT_FLAGS = new Set(["-d", "--output-dir", "-ds", "--output-dir-src", "-dr", "--output-dir-res", "-e", "--export-gradle"]);
+
+function parseJadxArgs(raw) {
+  if (!raw) return [];
+  let args;
+  try {
+    args = splitArgs(raw);
+  } catch (err) {
+    throw new InputError(`Couldn't parse --jadx-args (${err.message}): ${raw}`);
+  }
+  const bad = args.find((a) => JADX_LAYOUT_FLAGS.has(a.split("=")[0]));
+  if (bad) {
+    throw new InputError(`--jadx-args can't include ${bad}: apk-unravel controls jadx's output layout so the report and scans can find the files.`);
+  }
+  return args;
+}
 
 async function decompileCommand(apkPath, options) {
   const quiet = Boolean(options.json || options.quiet);
@@ -60,6 +80,16 @@ async function decompileCommand(apkPath, options) {
     return;
   }
 
+  let jadxExtraArgs;
+  try {
+    jadxExtraArgs = parseJadxArgs(options.jadxArgs);
+  } catch (err) {
+    if (!(err instanceof InputError)) throw err;
+    logger.error(err.message);
+    process.exitCode = 1;
+    return;
+  }
+
   // Accept split-APK containers (.xapk/.apks/.apkm) by extracting their base
   // APK; reject non-APK input (AAB, truncated downloads, ...) with a clear reason.
   let toolApk = resolvedApk;
@@ -103,7 +133,11 @@ async function decompileCommand(apkPath, options) {
   if (!skipJadx) {
     const spinner = spin("Running jadx (Java source decompile)...").start();
     try {
-      const jadxResult = await runJadx(toolApk, jadxOut, { deobfuscate: options.deobfuscate });
+      const jadxResult = await runJadx(toolApk, jadxOut, {
+        deobfuscate: options.deobfuscate,
+        extraArgs: jadxExtraArgs,
+        javaOpts: options.jadxJavaOpts,
+      });
       if (jadxResult.partial) {
         spinner.warn("jadx finished with errors — some classes could not be decompiled (output kept)");
         logger.dim(`  ${jadxResult.warning}`);
