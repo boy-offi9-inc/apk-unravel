@@ -167,3 +167,59 @@ test("analyzeUrls: groups by host, flags cleartext/IP/cloud endpoints, ignores n
   assert.deepEqual(a.ipUrls, ["http://203.0.113.7:8080/api"]);
   assert.deepEqual(a.notable.map((n) => n.kind).sort(), ["aws-s3-bucket", "azure-blob-storage", "firebase-realtime-db", "gcs-bucket"]);
 });
+
+const { buildExcluder } = require("../src/lib/stringScan");
+
+function libTree(t) {
+  const root = tmpdir();
+  t.after(() => rmrf(root));
+  const key = (n) => `String k = "AIzaSyA1234567890abcdefghijklmnopqrstu${n}";`;
+  write(path.join(root, "sources/com/acme/App.java"), key("A")); // app code
+  write(path.join(root, "sources/androidx/core/X.java"), key("B")); // third-party
+  write(path.join(root, "sources/com/google/android/gms/Y.java"), key("C")); // third-party
+  write(path.join(root, "sources/com/acme/androidx/Own.java"), key("D")); // app's OWN 'androidx' package: must survive
+  write(path.join(root, "sources/com/vendor/sdk/Z.java"), key("E"));
+  write(path.join(root, "smali_classes2/kotlin/K.smali"), key("F")); // apktool layout
+  write(path.join(root, "resources/res/values/strings.xml"), key("G")); // resources are never skipped
+  return root;
+}
+const files = (res) => res.potentialSecrets.flatMap((s) => s.files.map((f) => f.split(path.sep).join("/"))).sort();
+
+test("scanStrings: without flags everything is scanned", async (t) => {
+  const res = await scanStrings(libTree(t));
+  assert.equal(res.potentialSecrets.length, 7);
+  assert.equal(res.excluded.skippedDirs, 0);
+});
+
+test("scanStrings --skip-libs: drops well-known libraries in both jadx and smali layouts, keeps app code", async (t) => {
+  const res = await scanStrings(libTree(t), { skipLibs: true });
+  assert.deepEqual(files(res), [
+    "resources/res/values/strings.xml",
+    "sources/com/acme/App.java",
+    "sources/com/acme/androidx/Own.java",
+    "sources/com/vendor/sdk/Z.java",
+  ]);
+  assert.equal(res.excluded.libs, true);
+  assert.equal(res.excluded.skippedDirs, 3);
+});
+
+test("scanStrings --exclude-pkg: accepts dotted or slashed names, combines with --skip-libs", async (t) => {
+  const dotted = await scanStrings(libTree(t), { excludePackages: ["com.vendor.sdk"] });
+  assert.ok(!files(dotted).includes("sources/com/vendor/sdk/Z.java"));
+  assert.ok(files(dotted).includes("sources/androidx/core/X.java"), "libs stay in unless --skip-libs is also given");
+
+  const both = await scanStrings(libTree(t), { skipLibs: true, excludePackages: ["com/vendor/sdk/"] });
+  assert.equal(both.potentialSecrets.length, 3);
+  assert.deepEqual(both.excluded.packages, ["com/vendor/sdk"]);
+});
+
+test("buildExcluder: only matches a package folder directly under a code root", () => {
+  const ex = buildExcluder({ skipLibs: true });
+  assert.equal(ex("sources/androidx"), true);
+  assert.equal(ex("smali_classes3/androidx"), true);
+  assert.equal(ex(path.join("sources", "com", "google", "android", "gms")), true);
+  assert.equal(ex("sources/com/acme/androidx"), false);
+  assert.equal(ex("resources/androidx"), false);
+  assert.equal(ex("sources"), false);
+  assert.equal(buildExcluder()("sources/androidx"), false);
+});

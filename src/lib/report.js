@@ -104,6 +104,13 @@ function renderMarkdown(report) {
     lines.push(`## String scan`);
     lines.push("");
     const scan = report.stringScan;
+    if (scan.excluded && (scan.excluded.libs || scan.excluded.packages.length)) {
+      const what = [scan.excluded.libs ? "well-known third-party libraries (`--skip-libs`)" : null, scan.excluded.packages.length ? `\`${scan.excluded.packages.join("`, `")}\`` : null]
+        .filter(Boolean)
+        .join(" and ");
+      lines.push(`_Excluded from this scan: ${what} — ${scan.excluded.skippedDirs} package folder(s) skipped._`);
+      lines.push("");
+    }
     const ua = scan.urlAnalysis;
     lines.push(`**URLs found:** ${scan.urls.length}${scan.urlsTruncated ? " (scan cap reached — more exist; see --strings-out)" : ""}`);
     if (ua && ua.domains.length) {

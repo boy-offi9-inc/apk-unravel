@@ -145,7 +145,11 @@ async function decompileCommand(apkPath, options) {
     const scanRoot = !skipJadx ? jadxOut : apktoolOut;
     const spinner = spin("Scanning decompiled source for URLs, potential secrets, and keywords...").start();
     try {
-      stringScan = await scanStrings(scanRoot, { keywords: keywordMatchers });
+      stringScan = await scanStrings(scanRoot, {
+        keywords: keywordMatchers,
+        skipLibs: Boolean(options.skipLibs),
+        excludePackages: options.excludePkg ? options.excludePkg.split(",") : [],
+      });
       const parts = [`${stringScan.urls.length} URLs`, `${stringScan.potentialSecrets.length} unique secrets flagged`];
       if (keywordMatchers.length) parts.push(`${stringScan.keywordMatches.length} keyword matches`);
       spinner.succeed(`String scan complete — ${parts.join(", ")}`);

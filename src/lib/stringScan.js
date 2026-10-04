@@ -80,6 +80,51 @@ function redactUrl(url) {
 // scan's output.
 const PLACEHOLDER_REGEX = /YOUR[_-]?API|PLACEHOLDER|EXAMPLE|SAMPLE|CHANGE[_-]?ME|INSERT[_-]?KEY|DUMMY|XXXX|TEST[_-]?KEY|FAKE[_-]?KEY|AKIAIOSFODNN7EXAMPLE/i;
 
+// Well-known third-party packages that dominate a decompiled tree but rarely
+// hold anything about the app under review. Only used with --skip-libs, and
+// only matched as top-level packages under a code root (jadx "sources/" or
+// apktool "smali*/"), so an app's own com/acme/androidx isn't affected.
+const THIRD_PARTY_PACKAGES = [
+  "androidx",
+  "android/support",
+  "kotlin",
+  "kotlinx",
+  "com/google/android/gms",
+  "com/google/android/material",
+  "com/google/firebase",
+  "com/google/gson",
+  "com/google/protobuf",
+  "com/squareup",
+  "com/bumptech/glide",
+  "okhttp3",
+  "okio",
+  "retrofit2",
+  "io/reactivex",
+  "org/jetbrains",
+  "dagger",
+  "javax",
+];
+
+/** "com.foo.Bar" | "com/foo/Bar" | "/com/foo/" -> "com/foo/Bar" */
+function normalizePackage(pkg) {
+  return String(pkg).trim().replace(/\./g, "/").replace(/^\/+|\/+$/g, "");
+}
+
+/**
+ * Builds a predicate over a directory path relative to the scan root, true when
+ * that directory is a package we were asked to skip.
+ */
+function buildExcluder({ skipLibs = false, excludePackages = [] } = {}) {
+  const pkgs = new Set(excludePackages.map(normalizePackage).filter(Boolean));
+  if (skipLibs) for (const p of THIRD_PARTY_PACKAGES) pkgs.add(p);
+  if (!pkgs.size) return () => false;
+  return (relDir) => {
+    const parts = relDir.split(path.sep).join("/").split("/");
+    if (parts.length < 2 || !/^(?:sources|smali.*)$/.test(parts[0])) return false;
+    return pkgs.has(parts.slice(1).join("/"));
+  };
+}
+
 const SCAN_EXTENSIONS = new Set([
   ".java",
   ".kt",
@@ -223,7 +268,12 @@ function parseKeywords(rawValue) {
  *   parseKeywords().compiled — kept as a separate step so the CLI can surface
  *   `invalid` entries before the scan even starts.
  */
-async function scanStrings(rootDir, { maxMatchesPerCategory = 200, maxUrls = 5000, keywords = [] } = {}) {
+async function scanStrings(
+  rootDir,
+  { maxMatchesPerCategory = 200, maxUrls = 5000, keywords = [], skipLibs = false, excludePackages = [] } = {}
+) {
+  const isExcludedDir = buildExcluder({ skipLibs, excludePackages });
+  let skippedDirs = 0;
   const urls = new Set();
   let urlsTruncated = false;
   const secretsByKey = new Map();
@@ -240,6 +290,10 @@ async function scanStrings(rootDir, { maxMatchesPerCategory = 200, maxUrls = 500
     for (const entry of entries) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
+        if (isExcludedDir(path.relative(rootDir, full))) {
+          skippedDirs++;
+          continue;
+        }
         await walk(full);
         continue;
       }
@@ -332,10 +386,11 @@ async function scanStrings(rootDir, { maxMatchesPerCategory = 200, maxUrls = 500
   return {
     urls: urlList,
     urlsTruncated,
+    excluded: { libs: Boolean(skipLibs), packages: excludePackages.map(normalizePackage).filter(Boolean), skippedDirs },
     urlAnalysis: analyzeUrls(urlList),
     potentialSecrets,
     keywordMatches,
   };
 }
 
-module.exports = { scanStrings, parseKeywords, splitKeywords, shannonEntropy, redactUrl };
+module.exports = { scanStrings, parseKeywords, splitKeywords, shannonEntropy, redactUrl, buildExcluder, THIRD_PARTY_PACKAGES };

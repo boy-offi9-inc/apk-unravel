@@ -30,6 +30,8 @@ program
   )
   .option("--json", "print the analysis report as JSON on stdout (implies --quiet; secret values stay masked)")
   .option("-q, --quiet", "no banner, spinners or summary — print only the path to report.json (warnings/errors still go to stderr)")
+  .option("--skip-libs", "with --strings/--grep, skip well-known third-party packages (androidx, kotlin, gms, okhttp, ...) to cut noise")
+  .option("--exclude-pkg <packages>", "with --strings/--grep, also skip these packages (comma-separated, e.g. com.vendor.sdk,org.foo)")
   .option("--strings-out <path>", "write string/keyword scan findings to a separate file (.json or .csv, inferred from extension)")
   .action((apk, options) => {
     // commander maps --no-smali to options.smali === false.
