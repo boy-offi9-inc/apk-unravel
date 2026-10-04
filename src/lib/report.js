@@ -180,10 +180,15 @@ function renderMarkdown(report) {
   if (report.nativeLibs?.present) {
     lines.push(`## Native libraries`);
     lines.push("");
-    lines.push(`| ABI | .so files | 64-bit | Legacy |`);
-    lines.push(`| --- | --- | --- | --- |`);
+    lines.push(`| ABI | .so files | 64-bit | Legacy | 16 KB aligned |`);
+    lines.push(`| --- | --- | --- | --- | --- |`);
     for (const a of report.nativeLibs.abis) {
-      lines.push(`| \`${a.abi}\` | ${a.libraryCount} | ${a.is64Bit ? "✓" : "—"} | ${a.legacy ? "⚠️ yes" : "—"} |`);
+      let aligned = "n/a";
+      if (a.is64Bit && a.libraryCount) {
+        const bad = (a.unaligned16k || []).length;
+        aligned = bad ? `⚠️ ${a.libraryCount - bad}/${a.libraryCount}` : (a.unreadable || []).length === a.libraryCount ? "?" : "✓ all";
+      }
+      lines.push(`| \`${a.abi}\` | ${a.libraryCount} | ${a.is64Bit ? "✓" : "—"} | ${a.legacy ? "⚠️ yes" : "—"} | ${aligned} |`);
     }
     if (report.nativeLibs.flags.length) {
       lines.push("");

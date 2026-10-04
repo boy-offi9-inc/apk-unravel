@@ -1,5 +1,6 @@
 const fs = require("fs-extra");
 const path = require("path");
+const { readElfLoadAlignment } = require("./elf");
 
 // The set of ABIs Android actually recognizes. Anything else showing up as a
 // lib/<dir> folder name is either a typo/bad build or something non-standard
@@ -11,7 +12,7 @@ const ABI_64_BIT = new Set(["arm64-v8a", "x86_64"]);
 const LEGACY_ABIS = new Set(["armeabi"]);
 
 /**
- * Scans apktool's decompiled lib/ directory (a verbatim copy of the APK's
+ * Scans the decoded lib/ directory (a verbatim copy of the APK's
  * native library folder) and reports which ABIs are present, which .so files
  * ship under each, and a few common misconfiguration flags: no 64-bit ABI
  * at all (Play Store has required 64-bit support since 2019), legacy
@@ -48,13 +49,28 @@ async function scanNativeLibs(apktoolOutDir) {
       files = [];
     }
 
+    files.sort();
+
+    // 16 KB page-size compatibility only matters for the 64-bit ABIs, but the
+    // alignment is cheap to read, so record it for every library.
+    const alignment = {};
+    for (const f of files) {
+      const elf = await readElfLoadAlignment(path.join(abiPath, f));
+      alignment[f] = elf.valid
+        ? { aligned16k: elf.aligned16k, maxLoadAlign: Math.max(...elf.loadAlignments), minLoadAlign: Math.min(...elf.loadAlignments) }
+        : { aligned16k: null, error: elf.error };
+    }
+
     abis.push({
       abi: abiName,
       recognized: KNOWN_ABIS.has(abiName),
       is64Bit: ABI_64_BIT.has(abiName),
       legacy: LEGACY_ABIS.has(abiName),
       libraryCount: files.length,
-      libraries: files.sort(),
+      libraries: files,
+      alignment,
+      unaligned16k: files.filter((f) => alignment[f].aligned16k === false),
+      unreadable: files.filter((f) => alignment[f].aligned16k === null),
     });
   }
 
@@ -68,6 +84,18 @@ async function scanNativeLibs(apktoolOutDir) {
       flag: "no64BitAbi",
       severity: "medium",
       detail: "No 64-bit ABI (arm64-v8a/x86_64) shipped — Google Play has required 64-bit support since August 2019; this build would be rejected or is a partial ABI split.",
+    });
+  }
+
+  for (const a of abis.filter((x) => x.is64Bit && x.unaligned16k.length)) {
+    const shown = a.unaligned16k.slice(0, 10).join(", ") + (a.unaligned16k.length > 10 ? `, … (+${a.unaligned16k.length - 10} more)` : "");
+    flags.push({
+      flag: "unaligned16kPageSize",
+      severity: "medium",
+      detail:
+        `${a.unaligned16k.length} of ${a.libraryCount} ${a.abi} librar${a.unaligned16k.length === 1 ? "y has" : "ies have"} ELF LOAD segments aligned below 16 KB (${shown}). ` +
+        "Google Play requires apps targeting Android 15+ to support 16 KB page sizes; rebuild with NDK r28+ or link with -Wl,-z,max-page-size=16384. " +
+        "(Only ELF segment alignment is checked here — uncompressed .so files must also be 16 KB zip-aligned inside the APK, which apktool's output can't show.)",
     });
   }
 
