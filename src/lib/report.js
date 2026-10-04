@@ -6,6 +6,12 @@ function renderMarkdown(report) {
   lines.push(`# APK Analysis Report`);
   lines.push("");
   lines.push(`**File:** \`${report.apkFile}\``);
+  if (report.input && report.input.kind === "bundle") {
+    lines.push(
+      `**Input:** ${report.input.container} bundle — analyzed \`${report.input.baseEntry}\`` +
+        (report.input.partial ? ` (the other ${report.input.splitCount} split APK(s) were not analyzed)` : "")
+    );
+  }
   lines.push(`**Generated:** ${report.generatedAt}`);
   lines.push("");
 

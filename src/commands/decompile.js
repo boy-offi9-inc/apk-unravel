@@ -11,6 +11,7 @@ const { scanStrings, parseKeywords } = require("../lib/stringScan");
 const { writeStringsExport } = require("../lib/stringsExport");
 const { writeReport, toPublicReport } = require("../lib/report");
 const { resolveDefaultOutputDir, isTermux } = require("../lib/outputPath");
+const { prepareInput, InputError } = require("../lib/apkInput");
 
 async function decompileCommand(apkPath, options) {
   const quiet = Boolean(options.json || options.quiet);
@@ -59,6 +60,21 @@ async function decompileCommand(apkPath, options) {
     return;
   }
 
+  // Accept split-APK containers (.xapk/.apks/.apkm) by extracting their base
+  // APK; reject non-APK input (AAB, truncated downloads, ...) with a clear reason.
+  let toolApk = resolvedApk;
+  let input = { kind: "apk" };
+  try {
+    input = await prepareInput(resolvedApk, path.join(outRoot, "input"));
+    toolApk = input.apkPath;
+  } catch (err) {
+    if (!(err instanceof InputError)) throw err;
+    logger.error(err.message);
+    process.exitCode = 1;
+    return;
+  }
+  if (input.note) (input.partial ? logger.warn : logger.info)(input.note);
+
   const skipApktool = options.jadxOnly;
   const skipJadx = options.apktoolOnly;
 
@@ -71,7 +87,7 @@ async function decompileCommand(apkPath, options) {
   if (!skipApktool) {
     const spinner = spin("Running apktool (resources, manifest, smali)...").start();
     try {
-      await runApktool(resolvedApk, apktoolOut, { noSrc: options.noSmali });
+      await runApktool(toolApk, apktoolOut, { noSrc: options.noSmali });
       spinner.succeed("apktool decompile complete");
     } catch (err) {
       spinner.fail("apktool failed");
@@ -87,7 +103,7 @@ async function decompileCommand(apkPath, options) {
   if (!skipJadx) {
     const spinner = spin("Running jadx (Java source decompile)...").start();
     try {
-      const jadxResult = await runJadx(resolvedApk, jadxOut, { deobfuscate: options.deobfuscate });
+      const jadxResult = await runJadx(toolApk, jadxOut, { deobfuscate: options.deobfuscate });
       if (jadxResult.partial) {
         spinner.warn("jadx finished with errors — some classes could not be decompiled (output kept)");
         logger.dim(`  ${jadxResult.warning}`);
@@ -188,6 +204,10 @@ async function decompileCommand(apkPath, options) {
   if (manifest) {
     const report = {
       apkFile: resolvedApk,
+      input:
+        input.kind === "bundle"
+          ? { kind: "bundle", container: input.container, baseEntry: input.baseEntry, splitCount: input.splitCount, analyzedApk: toolApk, partial: Boolean(input.partial) }
+          : { kind: "apk" },
       generatedAt: new Date().toISOString(),
       manifest,
       appIdentity,

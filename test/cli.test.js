@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
-const { tmpdir, rmrf, write, fakeBin, MANIFEST } = require("./_helpers");
+const { tmpdir, rmrf, write, fakeBin, makeApk, MANIFEST } = require("./_helpers");
 
 const BIN = path.join(__dirname, "..", "bin", "apk-unravel.js");
 const posix = { skip: process.platform === "win32" && "needs a POSIX shell for the fake binaries" };
@@ -27,7 +27,7 @@ mkdir -p "$OUT"; cp "${manifestSrc}" "$OUT/AndroidManifest.xml"`
     path.join(dir, "jadx"),
     `mkdir -p "$2/sources/com/acme"; echo 'class A { String u = "https://api.acme.example"; }' > "$2/sources/com/acme/A.java"`
   );
-  const apk = write(path.join(dir, "app.apk"), "not a real apk");
+  const apk = write(path.join(dir, "app.apk"), makeApk());
   const env = { ...process.env, CI: "1", APKTOOL_PATH: wrapper, JADX_PATH: jadx };
   const run = (...args) => spawnSync(process.execPath, [BIN, "decompile", apk, "-o", path.join(dir, "out"), ...args], { env, encoding: "utf8" });
   return { dir, argsFile, run };
@@ -62,7 +62,7 @@ test("--jadx-only still produces a report (manifest read from jadx output)", pos
     path.join(dir, "jadx"),
     `mkdir -p "$2/sources" "$2/resources"; cp "${write(path.join(dir, "m.xml"), MANIFEST)}" "$2/resources/AndroidManifest.xml"`
   );
-  const apk = write(path.join(dir, "app.apk"), "x");
+  const apk = write(path.join(dir, "app.apk"), makeApk());
   const r = spawnSync(process.execPath, [BIN, "decompile", apk, "--jadx-only", "-o", path.join(dir, "out")], {
     env: { ...process.env, CI: "1", JADX_PATH: jadx },
     encoding: "utf8",
@@ -102,4 +102,41 @@ test("missing APK: error on stderr, nothing on stdout, exit 1", (t) => {
   assert.equal(r.status, 1);
   assert.match(r.stderr, /APK not found/);
   assert.ok(!/APK not found/.test(r.stdout));
+});
+
+test("XAPK input: tools run on the extracted base APK and the report says so", posix, (t) => {
+  const { dir, argsFile, run } = setup(t);
+  const { makeZip } = require("./_helpers");
+  const xapk = write(
+    path.join(dir, "bundle.xapk"),
+    makeZip([
+      { name: "manifest.json", data: JSON.stringify({ package_name: "com.acme.demo", split_apks: [{ file: "base.apk", id: "base" }, { file: "config.xxhdpi.apk", id: "config.xxhdpi" }] }) },
+      { name: "base.apk", data: require("./_helpers").makeApk() },
+      { name: "config.xxhdpi.apk", data: require("./_helpers").makeApk() },
+    ])
+  );
+  const r = spawnSync(process.execPath, [BIN, "decompile", xapk, "-o", path.join(dir, "out2")], {
+    env: { ...process.env, CI: "1", APKTOOL_PATH: path.join(dir, "apktool-wrap"), JADX_PATH: path.join(dir, "jadx") },
+    encoding: "utf8",
+  });
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  const apktoolArgs = fs.readFileSync(argsFile, "utf8").trim().split(/\s+/);
+  assert.equal(apktoolArgs[apktoolArgs.length - 1], path.join(dir, "out2", "input", "base.apk"));
+  assert.match(r.stderr, /other 1 split APK\(s\) were not analyzed/);
+  const report = JSON.parse(fs.readFileSync(path.join(dir, "out2", "report.json"), "utf8"));
+  assert.equal(report.input.kind, "bundle");
+  assert.equal(report.input.baseEntry, "base.apk");
+  assert.match(fs.readFileSync(path.join(dir, "out2", "report.md"), "utf8"), /\*\*Input:\*\* XAPK bundle — analyzed `base\.apk`/);
+});
+
+test("garbage input: clear error on stderr, exit 1, no tools run", posix, (t) => {
+  const { dir, argsFile, run } = setup(t);
+  const bad = write(path.join(dir, "download.apk"), "<html>403 Forbidden</html>");
+  const r = spawnSync(process.execPath, [BIN, "decompile", bad, "-o", path.join(dir, "out3")], {
+    env: { ...process.env, CI: "1", APKTOOL_PATH: path.join(dir, "apktool-wrap"), JADX_PATH: path.join(dir, "jadx") },
+    encoding: "utf8",
+  });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /not an APK\/ZIP/);
+  assert.ok(!fs.existsSync(argsFile), "apktool must not have been invoked");
 });
