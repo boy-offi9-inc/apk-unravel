@@ -1,7 +1,7 @@
 const fs = require("fs-extra");
 const path = require("path");
 const { XMLParser } = require("fast-xml-parser");
-const { DANGEROUS_PERMISSIONS } = require("./permissions");
+const { DANGEROUS_PERMISSIONS, permissionTier } = require("./permissions");
 
 const ANDROID_NS = "android:";
 
@@ -58,6 +58,7 @@ async function parseManifest(apktoolOutDir) {
     .map((name) => ({
       name,
       dangerous: DANGEROUS_PERMISSIONS.has(name),
+      tier: permissionTier(name),
     }));
 
   /**

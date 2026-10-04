@@ -65,3 +65,38 @@ test("parseManifest: missing file gives an actionable error", async (t) => {
   t.after(() => rmrf(dir));
   await assert.rejects(parseManifest(dir), /AndroidManifest\.xml not found/);
 });
+
+test("permissions: tiers separate runtime prompts from special-access grants", async (t) => {
+  const { permissionTier, DANGEROUS_PERMISSIONS } = require("../src/lib/permissions");
+  for (const name of [
+    "android.permission.POST_NOTIFICATIONS",
+    "android.permission.READ_MEDIA_IMAGES",
+    "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+    "android.permission.BLUETOOTH_SCAN",
+    "android.permission.NEARBY_WIFI_DEVICES",
+    "android.permission.ACTIVITY_RECOGNITION",
+  ]) {
+    assert.equal(permissionTier(name), "runtime", name);
+    assert.ok(DANGEROUS_PERMISSIONS.has(name), name);
+  }
+  for (const name of ["android.permission.SYSTEM_ALERT_WINDOW", "android.permission.PACKAGE_USAGE_STATS", "android.permission.WRITE_SETTINGS"]) {
+    assert.equal(permissionTier(name), "special", name);
+    assert.ok(DANGEROUS_PERMISSIONS.has(name), name);
+  }
+  assert.equal(permissionTier("android.permission.INTERNET"), "normal");
+  assert.ok(!DANGEROUS_PERMISSIONS.has("android.permission.INTERNET"));
+});
+
+test("parseManifest: each permission carries its tier", async (t) => {
+  const m = await parsed(
+    t,
+    `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="p">
+       <uses-permission android:name="android.permission.CAMERA"/>
+       <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
+       <uses-permission android:name="android.permission.INTERNET"/>
+       <application/></manifest>`
+  );
+  const tiers = Object.fromEntries(m.permissions.map((p) => [p.name.split(".").pop(), p.tier]));
+  assert.deepEqual(tiers, { CAMERA: "runtime", SYSTEM_ALERT_WINDOW: "special", INTERNET: "normal" });
+  assert.equal(m.dangerousPermissions.length, 2);
+});

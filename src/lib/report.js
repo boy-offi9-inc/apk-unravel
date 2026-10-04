@@ -35,8 +35,10 @@ function renderMarkdown(report) {
   if (report.manifest.permissions.length) {
     lines.push(`| Permission | Risk |`);
     lines.push(`| --- | --- |`);
+    const TIER_LABEL = { runtime: "⚠️ dangerous (runtime prompt)", special: "⚠️ special access", normal: "normal" };
     for (const p of report.manifest.permissions) {
-      lines.push(`| \`${p.name}\` | ${p.dangerous ? "⚠️ dangerous" : "normal"} |`);
+      const label = TIER_LABEL[p.tier] || (p.dangerous ? "⚠️ dangerous" : "normal");
+      lines.push(`| \`${p.name}\` | ${label} |`);
     }
   } else {
     lines.push("_No permissions declared._");
