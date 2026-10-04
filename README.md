@@ -37,17 +37,20 @@ apk-unravel-out/app/
 
 Override any of this with `-o <dir>`.
 
+**Accepted input:** an `.apk`, or a split-APK container (`.xapk`, `.apks`, `.apkm`) — for those, the base APK is extracted into `<out>/input/` and analysed (a universal APK if the bundle has one). Anything else (an `.aab`, a truncated download, an HTML error page saved as `.apk`) is rejected with a specific message instead of a Java stack trace.
+
 The report includes:
 
 - App display name and icon (resolved from manifest `@string`/`@mipmap` refs and saved as a standalone `icon.png` next to the report)
 - Package name, version, min/target SDK
-- Every declared permission, flagged `dangerous` or `normal`
-- Exported (or intent-filter-exposed) activities/services/receivers/providers — components reachable from outside the app
+- Every declared permission, tiered as **runtime** (user prompt), **special access** (overlay, all-files, install packages, usage stats, ...) or normal — including the Android 12–14 additions (`POST_NOTIFICATIONS`, `READ_MEDIA_*`, `BLUETOOTH_*`, `NEARBY_WIFI_DEVICES`, ...)
+- Exported (or intent-filter-exposed) activities, activity-aliases, services, receivers and providers — with how each is exposed, which permission (if any) guards it, whether that guard is meaningless (a custom permission declared with `protectionLevel="normal"`), and the launcher entry point marked as expected. The headline count is the number of *unguarded* ones
 - Deep links / custom URI schemes declared via `<intent-filter><data>` tags, with whether each one is actually externally reachable
-- Manifest-level security flags: `debuggable`, `allowBackup`, `usesCleartextTraffic`, referenced network security config
-- Native library (`lib/`) ABI coverage: which architectures ship, missing 64-bit support, legacy `armeabi` presence
-- Optional (`--strings`): URLs and heuristically-flagged potential secrets found across the decompiled source (Java/Kotlin/smali/XML/JS/properties/etc.) — deduplicated across files, placeholder values filtered out, and values masked in the human-readable report (full values stay in `report.json`)
+- Manifest-level security flags: `debuggable`, `allowBackup`, `usesCleartextTraffic`, `testOnly`, `sharedUserId`, plus the parsed network security config (base/per-domain cleartext, user-CA trust outside `debug-overrides`, pinning)
+- Native library (`lib/`) ABI coverage: which architectures ship, missing 64-bit support, legacy `armeabi` presence, and whether each 64-bit `.so` is **16 KB page-size compatible** (read straight from the ELF program headers — no extra tools)
+- Optional (`--strings`): URLs and heuristically-flagged potential secrets found across the decompiled source (Java/Kotlin/smali/XML/JS/properties/etc.) — deduplicated across files, placeholder values filtered out, and values masked in the human-readable report (full values stay in `report.json`). Covers AWS/Google/Stripe/Slack/GitHub/SendGrid/Twilio/Mailgun/Telegram/Azure/JWT/private-key shapes; generic `api_key = "..."` hits must also look random (entropy check). URLs are summarised by domain, with cleartext `http://`, raw-IP and Firebase/S3/GCS/Azure-blob endpoints called out, and any URL that embeds a secret is masked
 - Optional (`--grep <keywords>`): search the same decompiled source for your own comma-separated keywords or `/regex/flags` patterns — e.g. `--grep "firebase,MyCompanyName,/api\.internal\.[a-z]+/i"`. Works alongside or independently of `--strings`.
+- Optional (`--skip-libs`, `--exclude-pkg <packages>`): leave well-known third-party code (androidx, kotlin, gms, okhttp, ...) and any packages you name out of the string scan; the report says what was skipped
 - Optional (`--strings-out <path>`): write string/keyword findings to a standalone `.json` or `.csv` file, separate from the full report — handy for spreadsheet review or diffing against a previous scan.
 
 ---
@@ -194,6 +197,15 @@ apk-unravel decompile app.apk --strings --grep "firebase,MyCompanyName,/api\.int
 # Export string/keyword findings to a separate file for spreadsheet review, diffing, etc.
 apk-unravel decompile app.apk --strings --strings-out findings.csv
 
+# Split-APK bundles work too (the base APK is analysed; other splits are not)
+apk-unravel decompile app.xapk
+
+# Cut third-party noise out of the string scan
+apk-unravel decompile app.apk --strings --skip-libs --exclude-pkg com.vendor.sdk
+
+# Big app, jadx runs out of memory: more heap, fewer threads
+apk-unravel decompile app.apk --jadx-java-opts "-Xmx6g" --jadx-args "--threads-count 1"
+
 # Machine-readable: no banner/spinners, report JSON on stdout (secret values stay masked)
 apk-unravel decompile app.apk --json --strings | jq '.manifest.security.flags'
 
@@ -212,6 +224,9 @@ With `--json` / `--quiet`, warnings and errors still go to **stderr** and the ex
 
 - **`Permission denied` running `apk-unravel`?** The bin script lost its executable bit somewhere along the way (common with zips/some Windows checkouts). Fix it with `chmod +x $(which apk-unravel)`. A `postinstall` script now sets this automatically on fresh `npm install`s.
 - The `--strings` scan is a best-effort heuristic (regex-based), not a guarantee — always verify a flagged match before treating it as a real credential.
+- **16 KB page size:** the check reads ELF `PT_LOAD` alignment of 64-bit libraries. Uncompressed `.so` files must *also* be 16 KB zip-aligned inside the APK; that can't be seen in decompiled output, so verify it with the Android SDK's `zipalign -c -P 16 -v 4 app.apk` (build-tools 35+).
+- **Split-APK bundles:** only the base APK is analysed. Native libraries and density-specific resources that live in `config.*` splits won't appear in the report (a warning says so); pass a universal APK for a complete picture.
+- **`--jadx-args`** is split like a shell would, but never run through one. Flags that change jadx's output layout (`-d`, `-ds`, `-dr`, `-e`) are rejected.
 - "Exported" components are flagged based on an explicit `android:exported="true"` attribute *or* the presence of an `<intent-filter>` without an explicit `exported="false"` — a very common real-world misconfiguration worth a manual look.
 - Only analyze APKs you own or have explicit permission to inspect.
 
