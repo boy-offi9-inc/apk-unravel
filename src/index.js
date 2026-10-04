@@ -5,6 +5,7 @@ const doctorCommand = require("./commands/doctor");
 const { printBanner } = require("./lib/banner");
 const logger = require("./lib/logger");
 const { isQuietArgv } = require("./lib/output");
+const { collect } = require("./lib/customRules");
 
 if (!isQuietArgv(process.argv)) printBanner();
 
@@ -32,6 +33,10 @@ program
   .option("-q, --quiet", "no banner, spinners or summary — print only the path to report.json (warnings/errors still go to stderr)")
   .option("--jadx-args <args>", 'extra arguments passed to jadx, e.g. --jadx-args "--threads-count 1 --no-imports" (output-layout flags are rejected)')
   .option("--jadx-java-opts <opts>", 'JVM options for jadx, e.g. --jadx-java-opts "-Xmx6g" when it runs out of memory on a big app')
+  .option("--rule <name=pattern>", 'add your own secret detector, repeatable: --rule "internal=/ACME-[A-Z0-9]{8}/" (matches are masked like built-in secrets; implies a scan)', collect)
+  .option("--rules-file <path>", "load many custom rules from a .json (name/regex|keyword/flags/kind/minEntropy) or .txt (one name=pattern per line) file; repeatable", collect)
+  .option("--grep-file <path>", "load keywords / /regex/ patterns from a file, one per line (# comments ok) — like --grep for long lists; repeatable", collect)
+  .option("--no-builtin-secrets", "turn off the built-in secret patterns and report only your own rules")
   .option("--skip-libs", "with --strings/--grep, skip well-known third-party packages (androidx, kotlin, gms, okhttp, ...) to cut noise")
   .option("--exclude-pkg <packages>", "with --strings/--grep, also skip these packages (comma-separated, e.g. com.vendor.sdk,org.foo)")
   .option("--strings-out <path>", "write string/keyword scan findings to a separate file (.json or .csv, inferred from extension)")

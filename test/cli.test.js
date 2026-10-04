@@ -171,3 +171,77 @@ printf '%s\\n' "$@" > "${rec}"; printf 'JAVA_OPTS=%s\\n' "$JAVA_OPTS" >> "${rec}
   assert.equal(unterminated.status, 1);
   assert.match(unterminated.stderr, /unterminated double quote/);
 });
+
+// ---- custom rules (end to end) --------------------------------------------
+function ruleSetup(t, sourceText) {
+  const dir = tmpdir();
+  t.after(() => rmrf(dir));
+  const manifestSrc = write(path.join(dir, "m.xml"), MANIFEST);
+  const srcFile = write(path.join(dir, "A.java"), sourceText);
+  const marker = path.join(dir, "jadx-ran");
+  const jadx = fakeBin(
+    path.join(dir, "jadx"),
+    `touch "${marker}"; OUT="$2"; mkdir -p "$OUT/sources/com/acme" "$OUT/resources"; cp "${manifestSrc}" "$OUT/resources/AndroidManifest.xml"; cp "${srcFile}" "$OUT/sources/com/acme/A.java"`
+  );
+  const apk = write(path.join(dir, "app.apk"), makeApk());
+  const env = { ...process.env, CI: "1", JADX_PATH: jadx };
+  const run = (...extra) => spawnSync(process.execPath, [BIN, "decompile", apk, "--jadx-only", "-o", path.join(dir, "out"), ...extra], { env, encoding: "utf8" });
+  return { dir, marker, run };
+}
+const SRC = `class A { String a = "ACME-AB12CD34"; String g = "AIzaSyA1234567890abcdefghijklmnopqrstuA"; String h = "staging.acme.example"; }`;
+
+test("--rule alone triggers a scan (no --strings needed); value masked in --json", posix, (t) => {
+  const { run } = ruleSetup(t, SRC);
+  const r = run("--rule", "internal=/ACME-[A-Z0-9]{8}/", "--json");
+  assert.equal(r.status, 0, r.stderr);
+  const rep = JSON.parse(r.stdout);
+  const hit = rep.stringScan.potentialSecrets.find((s) => s.label === "Custom: internal");
+  assert.ok(hit && hit.masked && !("match" in hit), "custom secret is masked in stdout JSON");
+  assert.deepEqual(rep.stringScan.rules.secretRules, ["internal"]);
+});
+
+test("--rule is repeatable and --no-builtin-secrets leaves only the user's rules", posix, (t) => {
+  const { run, dir } = ruleSetup(t, SRC);
+  const r = run("--rule", "internal=/ACME-[A-Z0-9]{8}/", "--rule", "stg=staging.acme.example", "--no-builtin-secrets", "--json");
+  assert.equal(r.status, 0, r.stderr);
+  const labels = JSON.parse(r.stdout).stringScan.potentialSecrets.map((s) => s.label).sort();
+  assert.deepEqual(labels, ["Custom: internal", "Custom: stg"]);
+  const onDisk = JSON.parse(fs.readFileSync(path.join(dir, "out", "report.json"), "utf8"));
+  assert.ok(onDisk.stringScan.potentialSecrets.every((s) => "match" in s), "report.json on disk keeps full values");
+  assert.match(fs.readFileSync(path.join(dir, "out", "report.md"), "utf8"), /Secret detectors: built-in patterns \*\*off\*\* \+ 2 custom rule\(s\)/);
+});
+
+test("--rules-file (json) and --grep-file work together with --strings", posix, (t) => {
+  const { run, dir } = ruleSetup(t, SRC);
+  const rules = write(path.join(dir, "rules.json"), JSON.stringify([{ name: "internal", regex: "ACME-[A-Z0-9]{8}" }, { name: "stg host", keyword: "staging.acme.example", kind: "match" }]));
+  const words = write(path.join(dir, "words.txt"), "# list\nACME\n");
+  const r = run("--rules-file", rules, "--grep-file", words, "--strings", "--json");
+  assert.equal(r.status, 0, r.stderr);
+  const s = JSON.parse(r.stdout).stringScan;
+  assert.ok(s.potentialSecrets.some((x) => x.label === "Custom: internal"));
+  assert.ok(s.potentialSecrets.some((x) => x.label === "Google API key"), "built-ins still on");
+  // "ACME" is case-insensitive, so it matches both ACME-AB12CD34 and acme in the host name
+  assert.deepEqual([...new Set(s.keywordMatches.map((k) => k.keyword))].sort(), ["ACME", "stg host"]);
+});
+
+test("a bad rule fails fast: exit 1, clear message, and jadx is never started", posix, (t) => {
+  const { run, marker } = ruleSetup(t, SRC);
+  for (const [args, re] of [
+    [["--rule", "bad=/(unclosed/"], /--rule #1: invalid pattern/],
+    [["--rule", "any=/a*/"], /matches the empty string/],
+    [["--rules-file", "/no/such/rules.json"], /Can't read rules file/],
+  ]) {
+    const r = run(...args);
+    assert.equal(r.status, 1, args.join(" "));
+    assert.match(r.stderr, re);
+    assert.ok(!fs.existsSync(marker), "tools must not run when a rule is invalid");
+  }
+});
+
+test("--no-builtin-secrets with no rules warns that nothing will be detected", posix, (t) => {
+  const { run } = ruleSetup(t, SRC);
+  const r = run("--strings", "--no-builtin-secrets", "--json");
+  assert.equal(r.status, 0);
+  assert.match(r.stderr, /no secret detectors are active/);
+  assert.deepEqual(JSON.parse(r.stdout).stringScan.potentialSecrets, []);
+});

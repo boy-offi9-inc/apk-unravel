@@ -110,6 +110,14 @@ function renderMarkdown(report) {
     lines.push(`## String scan`);
     lines.push("");
     const scan = report.stringScan;
+    if (scan.rules && (scan.rules.secretRules.length || !scan.rules.builtinSecrets)) {
+      lines.push(
+        `_Secret detectors: ${scan.rules.builtinSecrets ? "built-in patterns" : "built-in patterns **off**"}` +
+          (scan.rules.secretRules.length ? ` + ${scan.rules.secretRules.length} custom rule(s): ${scan.rules.secretRules.map((n) => `\`${n}\``).join(", ")}` : "") +
+          `._`
+      );
+      lines.push("");
+    }
     if (scan.excluded && (scan.excluded.libs || scan.excluded.packages.length)) {
       const what = [scan.excluded.libs ? "well-known third-party libraries (`--skip-libs`)" : null, scan.excluded.packages.length ? `\`${scan.excluded.packages.join("`, `")}\`` : null]
         .filter(Boolean)

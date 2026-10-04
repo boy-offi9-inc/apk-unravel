@@ -13,6 +13,7 @@ const { writeReport, toPublicReport } = require("../lib/report");
 const { resolveDefaultOutputDir, isTermux } = require("../lib/outputPath");
 const { prepareInput, InputError } = require("../lib/apkInput");
 const { splitArgs } = require("../lib/shellSplit");
+const { loadCustomRules, RuleError } = require("../lib/customRules");
 
 // jadx flags that relocate or reshape its output; the report/scan stages rely
 // on the default <out>/jadx/{sources,resources} layout.
@@ -85,6 +86,18 @@ async function decompileCommand(apkPath, options) {
     jadxExtraArgs = parseJadxArgs(options.jadxArgs);
   } catch (err) {
     if (!(err instanceof InputError)) throw err;
+    logger.error(err.message);
+    process.exitCode = 1;
+    return;
+  }
+
+  // User-defined rules are parsed up front: a typo in a pattern should fail in
+  // milliseconds, not after minutes of apktool/jadx.
+  let customRules;
+  try {
+    customRules = await loadCustomRules(options);
+  } catch (err) {
+    if (!(err instanceof RuleError)) throw err;
     logger.error(err.message);
     process.exitCode = 1;
     return;
@@ -191,12 +204,21 @@ async function decompileCommand(apkPath, options) {
     logger.warn(`Ignoring invalid --grep pattern "${bad.keyword}": ${bad.error}`);
   }
 
-  if (options.strings || keywordMatchers.length) {
+  // Rules from --grep-file / a rules file with kind "match" behave like --grep terms.
+  for (const r of customRules.matchRules) keywordMatchers.push({ keyword: r.name, regex: r.regex });
+  const builtinSecrets = options.builtinSecrets !== false;
+
+  if (options.strings || keywordMatchers.length || customRules.secretRules.length) {
+    if (!builtinSecrets && !customRules.secretRules.length) {
+      logger.warn("--no-builtin-secrets given without any --rule/--rules-file: no secret detectors are active (URLs and keyword matches are still reported).");
+    }
     const scanRoot = !skipJadx ? jadxOut : apktoolOut;
     const spinner = spin("Scanning decompiled source for URLs, potential secrets, and keywords...").start();
     try {
       stringScan = await scanStrings(scanRoot, {
         keywords: keywordMatchers,
+        secretRules: customRules.secretRules,
+        builtinSecrets,
         skipLibs: Boolean(options.skipLibs),
         excludePackages: options.excludePkg ? options.excludePkg.split(",") : [],
       });

@@ -66,10 +66,13 @@ function randomnessOf(matchText) {
  * a query string) so the URL list in report.md/--strings-out stays shareable.
  * The unmasked value is still recorded under potentialSecrets in report.json.
  */
-function redactUrl(url) {
+function redactUrl(url, customSecretRules = []) {
   let out = url;
   for (const { regex } of SPECIFIC_PATTERNS) {
     out = out.replace(regex, (m) => (PLACEHOLDER_REGEX.test(m) ? m : maskSecret(m)));
+  }
+  for (const { regex } of customSecretRules) {
+    out = out.replace(regex, (m) => maskSecret(m));
   }
   return out;
 }
@@ -270,8 +273,20 @@ function parseKeywords(rawValue) {
  */
 async function scanStrings(
   rootDir,
-  { maxMatchesPerCategory = 200, maxUrls = 5000, keywords = [], skipLibs = false, excludePackages = [] } = {}
+  {
+    maxMatchesPerCategory = 200,
+    maxUrls = 5000,
+    keywords = [],
+    skipLibs = false,
+    excludePackages = [],
+    secretRules = [], // user-defined secret detectors (see customRules.js)
+    builtinSecrets = true, // false = report only the user's rules
+  } = {}
 ) {
+  const activePatterns = [
+    ...(builtinSecrets ? SECRET_PATTERNS : []),
+    ...secretRules.map((r) => ({ label: `Custom: ${r.name}`, regex: r.regex, custom: true, minEntropy: r.minEntropy })),
+  ];
   const isExcludedDir = buildExcluder({ skipLibs, excludePackages });
   let skippedDirs = 0;
   const urls = new Set();
@@ -316,21 +331,27 @@ async function scanStrings(
 
       const urlMatches = content.match(URL_REGEX) || [];
       for (const raw of urlMatches) {
-        const u = redactUrl(raw);
+        const u = redactUrl(raw, secretRules);
         if (urls.has(u)) continue;
         if (urls.size < maxUrls) urls.add(u);
         else urlsTruncated = true;
       }
 
       const relFile = path.relative(rootDir, full);
-      for (const { label, regex, generic } of SECRET_PATTERNS) {
+      for (const { label, regex, generic, custom, minEntropy } of activePatterns) {
         const matches = content.match(regex) || [];
         for (const m of matches) {
-          if (PLACEHOLDER_REGEX.test(m)) continue;
+          // The user's own rules are taken at their word: no placeholder
+          // filtering (they may be hunting for exactly such strings).
+          if (!custom && PLACEHOLDER_REGEX.test(m)) continue;
           let entropy = null;
           if (generic) {
             entropy = randomnessOf(m);
             if (entropy === null) continue;
+          } else if (minEntropy !== undefined) {
+            const h = shannonEntropy(m);
+            if (h < minEntropy) continue;
+            entropy = Math.round(h * 100) / 100;
           }
 
           const key = `${label}::${m}`;
@@ -386,6 +407,10 @@ async function scanStrings(
   return {
     urls: urlList,
     urlsTruncated,
+    rules: {
+      builtinSecrets,
+      secretRules: secretRules.map((r) => r.name),
+    },
     excluded: { libs: Boolean(skipLibs), packages: excludePackages.map(normalizePackage).filter(Boolean), skippedDirs },
     urlAnalysis: analyzeUrls(urlList),
     potentialSecrets,
@@ -393,4 +418,4 @@ async function scanStrings(
   };
 }
 
-module.exports = { scanStrings, parseKeywords, splitKeywords, shannonEntropy, redactUrl, buildExcluder, THIRD_PARTY_PACKAGES };
+module.exports = { scanStrings, parseKeywords, splitKeywords, shannonEntropy, redactUrl, buildExcluder, compileKeyword, THIRD_PARTY_PACKAGES };
