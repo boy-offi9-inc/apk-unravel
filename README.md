@@ -50,6 +50,7 @@ The report includes:
 - Native library (`lib/`) ABI coverage: which architectures ship, missing 64-bit support, legacy `armeabi` presence, and whether each 64-bit `.so` is **16 KB page-size compatible** (read straight from the ELF program headers — no extra tools)
 - Optional (`--strings`): URLs and heuristically-flagged potential secrets found across the decompiled source (Java/Kotlin/smali/XML/JS/properties/etc.) — deduplicated across files, placeholder values filtered out, and values masked in the human-readable report (full values stay in `report.json`). Covers AWS/Google/Stripe/Slack/GitHub/SendGrid/Twilio/Mailgun/Telegram/Azure/JWT/private-key shapes; generic `api_key = "..."` hits must also look random (entropy check). URLs are summarised by domain, with cleartext `http://`, raw-IP and Firebase/S3/GCS/Azure-blob endpoints called out, and any URL that embeds a secret is masked
 - Optional (`--grep <keywords>`): search the same decompiled source for your own comma-separated keywords or `/regex/flags` patterns — e.g. `--grep "firebase,MyCompanyName,/api\.internal\.[a-z]+/i"`. Works alongside or independently of `--strings`.
+- Optional, **your own detectors** (`--rule`, `--rules-file`, `--grep-file`, `--no-builtin-secrets`): hunt for company-specific tokens, internal hostnames or any string you care about instead of relying only on the built-in patterns. Custom *secret* rules are reported masked, exactly like built-in secrets; custom *match* rules are listed verbatim. Rules are validated before any decompiling starts, so a typo fails instantly
 - Optional (`--skip-libs`, `--exclude-pkg <packages>`): leave well-known third-party code (androidx, kotlin, gms, okhttp, ...) and any packages you name out of the string scan; the report says what was skipped
 - Optional (`--strings-out <path>`): write string/keyword findings to a standalone `.json` or `.csv` file, separate from the full report — handy for spreadsheet review or diffing against a previous scan.
 
@@ -200,6 +201,15 @@ apk-unravel decompile app.apk --strings --strings-out findings.csv
 # Split-APK bundles work too (the base APK is analysed; other splits are not)
 apk-unravel decompile app.xapk
 
+# Look for your own secret format (value is masked in the report); implies a scan
+apk-unravel decompile app.apk --rule 'internal=/ACME-[A-Z0-9]{8}/'
+
+# Several rules, plus a keyword list, and ONLY your rules (no built-in patterns)
+apk-unravel decompile app.apk --rule 'vault=/hvs\.[A-Za-z0-9_-]{20,}/' --grep-file hosts.txt --no-builtin-secrets
+
+# A reusable rule set
+apk-unravel decompile app.apk --rules-file my-rules.json
+
 # Cut third-party noise out of the string scan
 apk-unravel decompile app.apk --strings --skip-libs --exclude-pkg com.vendor.sdk
 
@@ -219,6 +229,31 @@ apk-unravel doctor
 With `--json` / `--quiet`, warnings and errors still go to **stderr** and the exit code still reflects failure, so `apk-unravel ... --json > report.json` never mixes diagnostics into the data.
 
 ---
+
+## Custom rules
+
+`--rule "name=pattern"` (repeatable) adds a secret detector. The pattern is either a `/regex/flags` literal or plain text (matched literally, case-insensitive); the `name=` prefix is optional and becomes the label `Custom: name` in the report. A rule can't match the empty string.
+
+`--rules-file` takes a `.txt` file (one `name=pattern` per line, `#` comments allowed) or a `.json` file for more control:
+
+```json
+{
+  "rules": [
+    { "name": "vault token", "regex": "hvs\\.[A-Za-z0-9_-]{20,}", "minEntropy": 3.5 },
+    { "name": "case-insensitive", "regex": "internal-[a-z0-9]{10}", "flags": "i" },
+    { "name": "staging host", "keyword": "staging.acme.example", "kind": "match" }
+  ]
+}
+```
+
+- `regex` (source, no slashes) **or** `keyword` (literal) — exactly one
+- `flags` — any of `g i m s u` (`g` is always on)
+- `kind` — `"secret"` (default; masked in output) or `"match"` (listed verbatim, like `--grep`)
+- `minEntropy` — drop hits below this many bits/character (0–8); useful for tokens that otherwise collide with readable constants
+
+`--grep-file words.txt` is `--grep` for long lists: one keyword or `/regex/` per line, so commas inside a regex are safe.
+
+Custom rules are never run through the built-in placeholder filter — if you search for a string containing "example", you get it. URLs that contain a custom-secret hit are masked in the URL list too. A badly written regex (nested quantifiers) can be slow on large trees; the scan skips files over 4 MB but doesn't time-limit individual patterns.
 
 ## Notes
 
