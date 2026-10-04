@@ -103,15 +103,41 @@ function renderMarkdown(report) {
   if (report.stringScan) {
     lines.push(`## String scan`);
     lines.push("");
-    lines.push(`**URLs found:** ${report.stringScan.urls.length}`);
-    if (report.stringScan.urls.length) {
+    const scan = report.stringScan;
+    const ua = scan.urlAnalysis;
+    lines.push(`**URLs found:** ${scan.urls.length}${scan.urlsTruncated ? " (scan cap reached — more exist; see --strings-out)" : ""}`);
+    if (ua && ua.domains.length) {
       lines.push("");
-      for (const u of report.stringScan.urls.slice(0, 50)) {
+      lines.push(`**Top domains:** ${ua.domains.slice(0, 15).map((d) => `\`${d.host}\` (${d.count})`).join(", ")}`);
+    }
+    if (ua && ua.cleartextTotal) {
+      lines.push("");
+      lines.push(`**Cleartext \`http://\` URLs:** ${ua.cleartextTotal}`);
+      for (const u of ua.cleartextUrls.slice(0, 15)) lines.push(`- \`${u}\``);
+      if (ua.cleartextTotal > 15) lines.push(`- _...and ${ua.cleartextTotal - 15} more (see report.json)_`);
+    }
+    if (ua && ua.ipTotal) {
+      lines.push("");
+      lines.push(`**Raw-IP endpoints:** ${ua.ipTotal}`);
+      for (const u of ua.ipUrls.slice(0, 15)) lines.push(`- \`${u}\``);
+    }
+    if (ua && ua.notable.length) {
+      lines.push("");
+      lines.push(`**Cloud endpoints worth checking for open access:**`);
+      for (const n of ua.notable) lines.push(`- ${n.kind}: \`${n.url}\``);
+    }
+    if (scan.urls.length) {
+      lines.push("");
+      lines.push(`<details><summary>All URLs (first 50)</summary>`);
+      lines.push("");
+      for (const u of scan.urls.slice(0, 50)) {
         lines.push(`- \`${u}\``);
       }
-      if (report.stringScan.urls.length > 50) {
-        lines.push(`- _...and ${report.stringScan.urls.length - 50} more (see report.json)_`);
+      if (scan.urls.length > 50) {
+        lines.push(`- _...and ${scan.urls.length - 50} more (see report.json)_`);
       }
+      lines.push("");
+      lines.push(`</details>`);
     }
     lines.push("");
     lines.push(`**Potential secrets flagged:** ${report.stringScan.potentialSecrets.length} unique`);

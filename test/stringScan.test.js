@@ -78,3 +78,92 @@ test("writeStringsExport: JSON export never contains unmasked secret values", as
   const csv = await writeStringsExport(scan, path.join(dir, "f.csv"));
   assert.ok(!require("fs").readFileSync(csv, "utf8").includes("SUPERSECRETVALUE1234567890"));
 });
+
+const { analyzeUrls } = require("../src/lib/urlAnalysis");
+const { shannonEntropy, redactUrl } = require("../src/lib/stringScan");
+
+test("scanStrings: detects modern provider tokens", async (t) => {
+  const root = tmpdir();
+  t.after(() => rmrf(root));
+  const gh = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7R8";
+  const sg = "SG." + "abcdefghijklmnop" + "." + "qrstuvwxyz0123456789ABCD";
+  const twilio = "SK" + "0123456789abcdef0123456789abcdef";
+  const github2 = "github_pat_" + "11ABCDEFG0abcdefghij_KLMNOPQRSTUV";
+  write(path.join(root, "sources/T.java"), `String a = "${gh}"; String b = "${sg}"; String c = "${twilio}"; String d = "${github2}";`);
+  const { potentialSecrets } = await scanStrings(root);
+  const labels = potentialSecrets.map((s) => s.label).sort();
+  assert.deepEqual(labels, ["GitHub fine-grained token", "GitHub token", "SendGrid API key", "Twilio API key SID"]);
+});
+
+test("scanStrings: entropy filter drops identifiers but keeps random-looking values", async (t) => {
+  const root = tmpdir();
+  t.after(() => rmrf(root));
+  write(
+    path.join(root, "sources/G.java"),
+    [
+      `String h = "auth_token = 'authorization_header_name_value'";`, // readable constant: no digits, low variety
+      `String k = "api_key = 'com_acme_config_option_name'";`,
+      `String real = "api_key = 'q8Zr3LmX0pTb7VnC5dKe2Wy9'";`,
+    ].join("\n")
+  );
+  const { potentialSecrets } = await scanStrings(root);
+  assert.equal(potentialSecrets.length, 1);
+  assert.match(potentialSecrets[0].match, /q8Zr3LmX0pTb7VnC5dKe2Wy9/);
+  assert.ok(potentialSecrets[0].entropy >= 3, "generic findings carry their entropy");
+});
+
+test("shannonEntropy: sanity", () => {
+  assert.equal(shannonEntropy(""), 0);
+  assert.equal(shannonEntropy("aaaaaaaa"), 0);
+  assert.ok(shannonEntropy("q8Zr3LmX0pTb7VnC") > 3.5);
+});
+
+test("URLs containing a secret are redacted in the URL list but the secret is still reported", async (t) => {
+  const root = tmpdir();
+  t.after(() => rmrf(root));
+  // Built at runtime: a contiguous webhook-shaped literal in the repo trips GitHub push protection (even though this one is fake).
+  const hook = ["https://hooks.slack.com/services", "T01234ABC", "B01234DEF", "abcdEFGH1234ijklMNOP5678"].join("/");
+  write(path.join(root, "sources/W.java"), `String w = "${hook}"; String ok = "https://api.acme.example/v1";`);
+  const res = await scanStrings(root);
+  assert.ok(!res.urls.some((u) => u.includes("abcdEFGH1234ijklMNOP5678")), "webhook secret must not appear in the URL list");
+  assert.ok(res.urls.includes("https://api.acme.example/v1"));
+  assert.equal(res.potentialSecrets.find((s) => s.label === "Slack webhook URL").match, hook);
+  assert.ok(!redactUrl("https://api.acme.example/v1").includes("…"), "clean URLs pass through untouched");
+});
+
+test("scanStrings: URL cap is reported instead of silently truncating", async (t) => {
+  const root = tmpdir();
+  t.after(() => rmrf(root));
+  const many = Array.from({ length: 30 }, (_, i) => `"https://h${i}.example/p"`).join(",");
+  write(path.join(root, "sources/U.java"), `String[] u = {${many}};`);
+  const capped = await scanStrings(root, { maxUrls: 10 });
+  assert.equal(capped.urls.length, 10);
+  assert.equal(capped.urlsTruncated, true);
+  const full = await scanStrings(root);
+  assert.equal(full.urls.length, 30);
+  assert.equal(full.urlsTruncated, false);
+});
+
+test("analyzeUrls: groups by host, flags cleartext/IP/cloud endpoints, ignores namespace and local noise", () => {
+  const a = analyzeUrls([
+    "https://api.acme.example/a",
+    "https://api.acme.example/b",
+    "http://legacy.acme.example/x",
+    "http://schemas.android.com/apk/res/android",
+    "http://www.w3.org/2001/XMLSchema",
+    "http://10.0.2.2:8080/emulator",
+    "http://localhost:3000/dev",
+    "http://203.0.113.7:8080/api",
+    "https://acme-prod-default-rtdb.firebaseio.com/",
+    "https://acme-assets.s3.us-east-1.amazonaws.com/img.png",
+    "https://storage.googleapis.com/acme-bucket/f",
+    "https://acme.blob.core.windows.net/c",
+    "not a url",
+  ]);
+  assert.equal(a.domains[0].host, "api.acme.example");
+  assert.equal(a.domains[0].count, 2);
+  assert.ok(!a.domains.some((d) => d.host === "schemas.android.com" || d.host === "www.w3.org"));
+  assert.deepEqual(a.cleartextUrls.sort(), ["http://203.0.113.7:8080/api", "http://legacy.acme.example/x"]);
+  assert.deepEqual(a.ipUrls, ["http://203.0.113.7:8080/api"]);
+  assert.deepEqual(a.notable.map((n) => n.kind).sort(), ["aws-s3-bucket", "azure-blob-storage", "firebase-realtime-db", "gcs-bucket"]);
+});

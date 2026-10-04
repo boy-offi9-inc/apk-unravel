@@ -1,21 +1,78 @@
 const fs = require("fs-extra");
 const path = require("path");
+const { analyzeUrls } = require("./urlAnalysis");
 
 const URL_REGEX = /https?:\/\/[^\s"'<>)]+/g;
 
 // Deliberately generic/high-level patterns for common secret shapes. This is a
 // best-effort heuristic scan (like many static-analysis tools ship), not a
 // guarantee — always confirm findings before treating them as sensitive.
+//
+// Patterns with `generic: true` match any long quoted value after a name like
+// api_key/token/secret, so they also pass an entropy check (see looksRandom) —
+// otherwise identifiers such as "authorization_token_header" get flagged.
 const SECRET_PATTERNS = [
-  { label: "Generic API key assignment", regex: /['"]?api[_-]?key['"]?\s*[:=]\s*['"][A-Za-z0-9_\-]{16,}['"]/gi },
+  { label: "Generic API key assignment", generic: true, regex: /['"]?api[_-]?key['"]?\s*[:=]\s*['"][A-Za-z0-9_\-]{16,}['"]/gi },
+  { label: "Firebase/Bearer-style long token", generic: true, regex: /['"]?(?:token|secret|bearer)['"]?\s*[:=]\s*['"][A-Za-z0-9_\-.]{20,}['"]/gi },
   { label: "AWS Access Key ID", regex: /AKIA[0-9A-Z]{16}/g },
+  { label: "AWS secret access key assignment", generic: true, regex: /aws[\w.-]{0,20}secret[\w.-]{0,20}['"]\s*[:=,]?\s*['"][A-Za-z0-9\/+=]{40}['"]/gi },
   { label: "Google API key", regex: /AIza[0-9A-Za-z\-_]{35}/g },
-  { label: "Firebase/Bearer-style long token", regex: /['"]?(?:token|secret|bearer)['"]?\s*[:=]\s*['"][A-Za-z0-9_\-.]{20,}['"]/gi },
   { label: "Private key block", regex: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g },
   { label: "Slack token", regex: /xox[baprs]-[A-Za-z0-9-]{10,48}/g },
+  { label: "Slack webhook URL", regex: /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9]+\/B[A-Za-z0-9]+\/[A-Za-z0-9]+/g },
   { label: "Stripe live secret key", regex: /sk_live_[A-Za-z0-9]{16,}/g },
+  { label: "Stripe live restricted key", regex: /rk_live_[A-Za-z0-9]{16,}/g },
+  { label: "GitHub token", regex: /gh[pousr]_[A-Za-z0-9]{36,255}/g },
+  { label: "GitHub fine-grained token", regex: /github_pat_[A-Za-z0-9_]{22,255}/g },
+  { label: "SendGrid API key", regex: /SG\.[A-Za-z0-9_-]{16,32}\.[A-Za-z0-9_-]{16,64}/g },
+  { label: "Twilio API key SID", regex: /\bSK[0-9a-f]{32}\b/g },
+  { label: "Mailgun API key", regex: /\bkey-[0-9a-zA-Z]{32}\b/g },
+  { label: "Telegram bot token", regex: /\b\d{8,10}:AA[A-Za-z0-9_-]{33}\b/g },
+  { label: "Azure storage account key", regex: /AccountKey=[A-Za-z0-9+\/]{60,}={0,2}/g },
   { label: "JWT", regex: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g },
 ];
+
+const SPECIFIC_PATTERNS = SECRET_PATTERNS.filter((p) => !p.generic);
+
+/** Shannon entropy in bits per character. */
+function shannonEntropy(str) {
+  if (!str) return 0;
+  const counts = new Map();
+  for (const ch of str) counts.set(ch, (counts.get(ch) || 0) + 1);
+  let h = 0;
+  for (const n of counts.values()) {
+    const p = n / str.length;
+    h -= p * Math.log2(p);
+  }
+  return h;
+}
+
+/**
+ * Cheap "does this look like a machine-generated secret rather than a
+ * human-readable identifier" test for the generic patterns: mixes letters and
+ * digits and has enough character variety. Returns the entropy when it passes,
+ * or null when the value looks like a name/constant.
+ */
+function randomnessOf(matchText) {
+  const quoted = /['"]([^'"]+)['"]\s*$/.exec(matchText);
+  const value = quoted ? quoted[1] : matchText;
+  const entropy = shannonEntropy(value);
+  if (entropy >= 3.0 && /\d/.test(value) && /[A-Za-z]/.test(value)) return Math.round(entropy * 100) / 100;
+  return null;
+}
+
+/**
+ * Masks any known-secret substring inside a URL (a Slack webhook, a token in
+ * a query string) so the URL list in report.md/--strings-out stays shareable.
+ * The unmasked value is still recorded under potentialSecrets in report.json.
+ */
+function redactUrl(url) {
+  let out = url;
+  for (const { regex } of SPECIFIC_PATTERNS) {
+    out = out.replace(regex, (m) => (PLACEHOLDER_REGEX.test(m) ? m : maskSecret(m)));
+  }
+  return out;
+}
 
 // Matches captured entirely against known placeholder/example wording get
 // dropped — "YOUR_API_KEY_HERE" satisfies the generic 16+ char pattern but
@@ -166,8 +223,9 @@ function parseKeywords(rawValue) {
  *   parseKeywords().compiled — kept as a separate step so the CLI can surface
  *   `invalid` entries before the scan even starts.
  */
-async function scanStrings(rootDir, { maxMatchesPerCategory = 200, keywords = [] } = {}) {
+async function scanStrings(rootDir, { maxMatchesPerCategory = 200, maxUrls = 5000, keywords = [] } = {}) {
   const urls = new Set();
+  let urlsTruncated = false;
   const secretsByKey = new Map();
   const keywordsByKey = new Map();
 
@@ -203,21 +261,29 @@ async function scanStrings(rootDir, { maxMatchesPerCategory = 200, keywords = []
       }
 
       const urlMatches = content.match(URL_REGEX) || [];
-      for (const u of urlMatches) {
-        if (urls.size < maxMatchesPerCategory) urls.add(u);
+      for (const raw of urlMatches) {
+        const u = redactUrl(raw);
+        if (urls.has(u)) continue;
+        if (urls.size < maxUrls) urls.add(u);
+        else urlsTruncated = true;
       }
 
       const relFile = path.relative(rootDir, full);
-      for (const { label, regex } of SECRET_PATTERNS) {
+      for (const { label, regex, generic } of SECRET_PATTERNS) {
         const matches = content.match(regex) || [];
         for (const m of matches) {
           if (PLACEHOLDER_REGEX.test(m)) continue;
+          let entropy = null;
+          if (generic) {
+            entropy = randomnessOf(m);
+            if (entropy === null) continue;
+          }
 
           const key = `${label}::${m}`;
           let entryRec = secretsByKey.get(key);
           if (!entryRec) {
             if (secretsByKey.size >= maxMatchesPerCategory) continue;
-            entryRec = { label, match: m, masked: maskSecret(m), files: new Set(), occurrences: 0 };
+            entryRec = { label, match: m, masked: maskSecret(m), entropy, files: new Set(), occurrences: 0 };
             secretsByKey.set(key, entryRec);
           }
           entryRec.occurrences++;
@@ -248,6 +314,7 @@ async function scanStrings(rootDir, { maxMatchesPerCategory = 200, keywords = []
     label: s.label,
     match: s.match,
     masked: s.masked,
+    ...(s.entropy !== null && s.entropy !== undefined ? { entropy: s.entropy } : {}),
     occurrences: s.occurrences,
     files: Array.from(s.files),
     truncatedFileList: s.occurrences > s.files.size || s.files.size >= MAX_FILES_PER_SECRET,
@@ -261,11 +328,14 @@ async function scanStrings(rootDir, { maxMatchesPerCategory = 200, keywords = []
     truncatedFileList: k.occurrences > k.files.size || k.files.size >= MAX_FILES_PER_SECRET,
   }));
 
+  const urlList = Array.from(urls);
   return {
-    urls: Array.from(urls),
+    urls: urlList,
+    urlsTruncated,
+    urlAnalysis: analyzeUrls(urlList),
     potentialSecrets,
     keywordMatches,
   };
 }
 
-module.exports = { scanStrings, parseKeywords, splitKeywords };
+module.exports = { scanStrings, parseKeywords, splitKeywords, shannonEntropy, redactUrl };

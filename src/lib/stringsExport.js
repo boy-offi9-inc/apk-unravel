@@ -46,7 +46,7 @@ async function writeStringsExport(stringScan, outPath) {
     const safeSecrets = stringScan.potentialSecrets.map(({ match, ...rest }) => rest); // omit unmasked match
     await fs.writeFile(
       outPath,
-      JSON.stringify({ urls: stringScan.urls, potentialSecrets: safeSecrets, keywordMatches: stringScan.keywordMatches || [] }, null, 2),
+      JSON.stringify({ urls: stringScan.urls, potentialSecrets: safeSecrets, keywordMatches: stringScan.keywordMatches || [], urlAnalysis: stringScan.urlAnalysis || null, urlsTruncated: Boolean(stringScan.urlsTruncated) }, null, 2),
       "utf8"
     );
   }
