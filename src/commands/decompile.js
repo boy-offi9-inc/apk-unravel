@@ -204,7 +204,10 @@ async function decompileCommand(apkPath, options) {
     logger.kv("Version", `${manifest.versionName || "—"} (${manifest.versionCode || "—"})`);
     logger.kv("SDK", `min ${manifest.minSdk || "—"} / target ${manifest.targetSdk || "—"}`);
     logger.kv("Permissions", `${manifest.permissions.length} total, ${manifest.dangerousPermissions.length} dangerous`);
-    logger.kv("Exported/intent-filtered components", manifest.flaggedExported.length);
+    logger.kv(
+      "Exported/intent-filtered components",
+      `${manifest.flaggedExported.length} (${manifest.unguardedExported.length} unguarded, excluding launcher)`
+    );
     logger.kv("Deep links / custom URI schemes", manifest.deepLinks.length);
     if (manifest.deepLinks.length) {
       for (const l of manifest.deepLinks) {

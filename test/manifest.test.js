@@ -100,3 +100,127 @@ test("parseManifest: each permission carries its tier", async (t) => {
   assert.deepEqual(tiers, { CAMERA: "runtime", SYSTEM_ALERT_WINDOW: "special", INTERNET: "normal" });
   assert.equal(m.dangerousPermissions.length, 2);
 });
+
+const GUARDED_MANIFEST = `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.acme.g" android:sharedUserId="com.acme.shared">
+  <permission android:name="com.acme.g.WEAK" android:protectionLevel="normal"/>
+  <permission android:name="com.acme.g.STRONG" android:protectionLevel="signature"/>
+  <permission android:name="com.acme.g.NOLEVEL"/>
+  <application android:testOnly="true">
+    <activity android:name=".Main" android:exported="true">
+      <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+    </activity>
+    <activity-alias android:name=".Alias" android:targetActivity=".Main" android:exported="true"/>
+    <activity android:name=".Open" android:exported="true"/>
+    <service android:name=".Guarded" android:exported="true" android:permission="com.acme.g.STRONG"/>
+    <service android:name=".WeakGuarded" android:exported="true" android:permission="com.acme.g.WEAK"/>
+    <service android:name=".NoLevelGuarded" android:exported="true" android:permission="com.acme.g.NOLEVEL"/>
+    <receiver android:name=".SystemGuarded" android:exported="true" android:permission="android.permission.BIND_DEVICE_ADMIN"/>
+    <provider android:name=".HalfGuarded" android:authorities="a" android:exported="true" android:readPermission="com.acme.g.STRONG"/>
+    <provider android:name=".FullGuarded" android:authorities="b" android:exported="true" android:readPermission="com.acme.g.STRONG" android:writePermission="com.acme.g.STRONG"/>
+  </application>
+</manifest>`;
+
+test("parseManifest: components are classified by permission guard", async (t) => {
+  const m = await parsed(t, GUARDED_MANIFEST);
+  const byName = Object.fromEntries(m.flaggedExported.map((c) => [c.name, c]));
+
+  assert.equal(byName[".Main"].launcher, true);
+  assert.equal(byName[".Open"].guarded, false);
+  assert.equal(byName[".Guarded"].guarded, true);
+  assert.equal(byName[".Guarded"].weakGuard, false);
+  assert.equal(byName[".WeakGuarded"].weakGuard, true, "custom permission with protectionLevel=normal is no real guard");
+  assert.equal(byName[".NoLevelGuarded"].weakGuard, true, "missing protectionLevel defaults to normal");
+  assert.equal(byName[".SystemGuarded"].weakGuard, false, "system permissions aren't declared here, so aren't judged weak");
+  assert.equal(byName[".HalfGuarded"].guarded, false, "read-only permission leaves writes open");
+  assert.equal(byName[".FullGuarded"].guarded, true);
+});
+
+test("parseManifest: activity-alias is analysed like an activity", async (t) => {
+  const m = await parsed(t, GUARDED_MANIFEST);
+  const alias = m.flaggedExported.find((c) => c.name === ".Alias");
+  assert.equal(alias.kind, "activityAliases");
+  assert.equal(m.components.activityAliases[0].targetActivity, ".Main");
+});
+
+test("parseManifest: unguardedExported excludes launcher and properly guarded components", async (t) => {
+  const m = await parsed(t, GUARDED_MANIFEST);
+  assert.deepEqual(
+    m.unguardedExported.map((c) => c.name).sort(),
+    [".Alias", ".HalfGuarded", ".NoLevelGuarded", ".Open", ".WeakGuarded"]
+  );
+  assert.ok(m.flaggedExported.length > m.unguardedExported.length, "flaggedExported still lists everything");
+});
+
+test("parseManifest: testOnly and sharedUserId are flagged", async (t) => {
+  const m = await parsed(t, GUARDED_MANIFEST);
+  const flags = m.security.flags.map((f) => f.flag);
+  assert.ok(flags.includes("testOnly"));
+  assert.ok(flags.includes("sharedUserId"));
+  assert.equal(m.security.sharedUserId, "com.acme.shared");
+});
+
+function nscManifest(ref = "@xml/nsc") {
+  return `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="p"><application android:networkSecurityConfig="${ref}"/></manifest>`;
+}
+async function withNsc(t, nscXml, ref) {
+  const dir = tmpdir();
+  t.after(() => rmrf(dir));
+  write(path.join(dir, "AndroidManifest.xml"), nscManifest(ref));
+  if (nscXml !== null) write(path.join(dir, "res/xml/nsc.xml"), nscXml);
+  return parseManifest(dir);
+}
+
+test("network security config: base cleartext + user CA trust are flagged", async (t) => {
+  const m = await withNsc(
+    t,
+    `<network-security-config>
+       <base-config cleartextTrafficPermitted="true"><trust-anchors><certificates src="system"/><certificates src="user"/></trust-anchors></base-config>
+     </network-security-config>`
+  );
+  const flags = m.security.flags.map((f) => f.flag);
+  assert.ok(flags.includes("networkSecurityConfigCleartext"));
+  assert.ok(flags.includes("trustsUserCertificates"));
+  assert.equal(m.security.networkSecurity.found, true);
+});
+
+test("network security config: per-domain cleartext is listed; pinning and debug-overrides are recorded", async (t) => {
+  const m = await withNsc(
+    t,
+    `<network-security-config>
+       <domain-config cleartextTrafficPermitted="true"><domain includeSubdomains="true">legacy.acme.example</domain></domain-config>
+       <domain-config><domain>api.acme.example</domain><pin-set><pin digest="SHA-256">AAAA=</pin></pin-set></domain-config>
+       <debug-overrides><trust-anchors><certificates src="user"/></trust-anchors></debug-overrides>
+     </network-security-config>`
+  );
+  const dom = m.security.flags.find((f) => f.flag === "networkSecurityConfigCleartextDomains");
+  assert.match(dom.detail, /legacy\.acme\.example/);
+  assert.ok(!m.security.flags.some((f) => f.flag === "trustsUserCertificates"), "debug-overrides trust must not count as production trust");
+  assert.equal(m.security.networkSecurity.hasPinning, true);
+  assert.equal(m.security.networkSecurity.hasDebugOverrides, true);
+});
+
+test("network security config: a locked-down config raises no flags", async (t) => {
+  const m = await withNsc(
+    t,
+    `<network-security-config><base-config cleartextTrafficPermitted="false"><trust-anchors><certificates src="system"/></trust-anchors></base-config></network-security-config>`
+  );
+  assert.deepEqual(m.security.flags.filter((f) => /networkSecurity|trustsUser/.test(f.flag)), []);
+});
+
+test("network security config: missing referenced file is reported, not fatal", async (t) => {
+  const m = await withNsc(t, null);
+  assert.equal(m.security.networkSecurity.found, false);
+  assert.ok(m.security.flags.some((f) => f.flag === "networkSecurityConfigUnreadable"));
+});
+
+test("report.md: exported table shows exposure and guard, launcher marked expected", async (t) => {
+  const { renderMarkdown } = require("../src/lib/report");
+  const m = await parsed(t, GUARDED_MANIFEST);
+  const md = renderMarkdown({
+    apkFile: "a.apk", generatedAt: "now", manifest: m, appIdentity: null, stringScan: null, nativeLibs: null,
+    outputPaths: { apktool: "/x", jadx: null },
+  });
+  assert.match(md, /Exported \/ intent-filtered components \(\d+, 5 unguarded\)/);
+  assert.match(md, /launcher entry point \(expected\)/);
+  assert.match(md, /no real protection/);
+});

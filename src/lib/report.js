@@ -76,16 +76,25 @@ function renderMarkdown(report) {
   }
   lines.push("");
 
-  lines.push(`## Exported / intent-filtered components (${report.manifest.flaggedExported.length})`);
+  const exported = report.manifest.flaggedExported;
+  const unguarded = report.manifest.unguardedExported;
+  lines.push(
+    `## Exported / intent-filtered components (${exported.length}${unguarded ? `, ${unguarded.length} unguarded` : ""})`
+  );
   lines.push("");
-  if (report.manifest.flaggedExported.length) {
-    lines.push(`| Kind | Name |`);
-    lines.push(`| --- | --- |`);
-    for (const c of report.manifest.flaggedExported) {
-      lines.push(`| ${c.kind} | \`${c.name}\` |`);
+  if (exported.length) {
+    lines.push(`| Kind | Name | Exposed via | Guard |`);
+    lines.push(`| --- | --- | --- | --- |`);
+    for (const c of exported) {
+      let guard;
+      if (c.launcher) guard = "launcher entry point (expected)";
+      else if (c.guarded && c.weakGuard) guard = `⚠️ \`${c.permission}\` (custom permission with normal protection level — no real protection)`;
+      else if (c.guarded) guard = `\`${c.permission}\``;
+      else guard = "⚠️ none";
+      lines.push(`| ${c.kind} | \`${c.name}\` | ${c.exposedVia || "—"} | ${guard} |`);
     }
     lines.push("");
-    lines.push("_These are reachable from outside the app (explicitly exported, or exposed via an intent-filter). Worth a manual look if any handle sensitive data._");
+    lines.push("_These are reachable from outside the app (explicitly exported, or exposed via an intent-filter). Ones without a permission guard are worth a manual look if they handle sensitive data._");
   } else {
     lines.push("_None found._");
   }
