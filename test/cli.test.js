@@ -97,9 +97,9 @@ test("--quiet prints only the report.json path", posix, (t) => {
   assert.equal(r.stdout.trim(), path.join(dir, "out", "report.json"));
 });
 
-test("missing APK: error on stderr, nothing on stdout, exit 1", (t) => {
+test("missing APK: error on stderr, nothing on stdout, exit 2 (input error)", (t) => {
   const r = spawnSync(process.execPath, [BIN, "decompile", "/no/such/file.apk"], { env: { ...process.env, CI: "1" }, encoding: "utf8" });
-  assert.equal(r.status, 1);
+  assert.equal(r.status, 2);
   assert.match(r.stderr, /APK not found/);
   assert.ok(!/APK not found/.test(r.stdout));
 });
@@ -129,14 +129,14 @@ test("XAPK input: tools run on the extracted base APK and the report says so", p
   assert.match(fs.readFileSync(path.join(dir, "out2", "report.md"), "utf8"), /\*\*Input:\*\* XAPK bundle — analyzed `base\.apk`/);
 });
 
-test("garbage input: clear error on stderr, exit 1, no tools run", posix, (t) => {
+test("garbage input: clear error on stderr, exit 2 (input error), no tools run", posix, (t) => {
   const { dir, argsFile, run } = setup(t);
   const bad = write(path.join(dir, "download.apk"), "<html>403 Forbidden</html>");
   const r = spawnSync(process.execPath, [BIN, "decompile", bad, "-o", path.join(dir, "out3")], {
     env: { ...process.env, CI: "1", APKTOOL_PATH: path.join(dir, "apktool-wrap"), JADX_PATH: path.join(dir, "jadx") },
     encoding: "utf8",
   });
-  assert.equal(r.status, 1);
+  assert.equal(r.status, 2);
   assert.match(r.stderr, /not an APK\/ZIP/);
   assert.ok(!fs.existsSync(argsFile), "apktool must not have been invoked");
 });

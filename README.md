@@ -221,6 +221,12 @@ apk-unravel decompile app.apk --jadx-java-opts "-Xmx6g" --jadx-args "--threads-c
 # Machine-readable: no banner/spinners, report JSON on stdout (secret values stay masked)
 apk-unravel decompile app.apk --json --strings | jq '.manifest.security.flags'
 
+# Heuristically check whether declared deep links are actually handled in code
+apk-unravel decompile app.apk --deep-link-analysis
+
+# Track an app across versions: diff this run against a previous report.json (writes diff.md)
+apk-unravel decompile app.apk --diff ./out-v1/report.json
+
 # Quiet: print only the path to report.json (handy in scripts)
 REPORT=$(apk-unravel decompile app.apk --quiet)
 
@@ -258,6 +264,9 @@ With `--json` / `--quiet`, warnings and errors still go to **stderr** and the ex
 Custom rules are never run through the built-in placeholder filter — if you search for a string containing "example", you get it. URLs that contain a custom-secret hit are masked in the URL list too. A badly written regex (nested quantifiers) can be slow on large trees; the scan skips files over 4 MB but doesn't time-limit individual patterns.
 
 ## Notes
+
+- **Exit codes:** `0` ok · `1` generic error · `2` bad input (missing/invalid APK) · `3` apktool/jadx missing or failed · `4` jadx finished with errors but usable output (partial success).
+- **`--deep-link-analysis`** (off by default) cross-references each declared deep link with the target activity's decompiled source — class existence plus a regex for `getIntent()`/`getData()`/`onNewIntent()` — as a hint whether the URI is actually handled; it's heuristic, not proof.
 
 - **`Permission denied` running `apk-unravel`?** The bin script lost its executable bit somewhere along the way (common with zips/some Windows checkouts). Fix it with `chmod +x $(which apk-unravel)`. A `postinstall` script now sets this automatically on fresh `npm install`s.
 - The `--strings` scan is a best-effort heuristic (regex-based), not a guarantee — always verify a flagged match before treating it as a real credential.
