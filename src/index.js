@@ -40,6 +40,8 @@ program
   .option("--skip-libs", "with --strings/--grep, skip well-known third-party packages (androidx, kotlin, gms, okhttp, ...) to cut noise")
   .option("--exclude-pkg <packages>", "with --strings/--grep, also skip these packages (comma-separated, e.g. com.vendor.sdk,org.foo)")
   .option("--strings-out <path>", "write string/keyword scan findings to a separate file (.json or .csv, inferred from extension)")
+  .option("--deep-link-analysis", "cross-reference each declared deep link with the component's decompiled source to hint whether the URI is actually handled (default off)")
+  .option("--diff <old-report.json>", "compare this run against a previous report.json: new/removed permissions, exported components, deep links, security flags and secrets; writes diff.md")
   .action((apk, options) => {
     // commander maps --no-smali to options.smali === false.
     // Return the promise so parseAsync() actually waits for (and surfaces

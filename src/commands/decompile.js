@@ -10,6 +10,8 @@ const { scanNativeLibs } = require("../lib/nativeLibs");
 const { scanStrings, parseKeywords } = require("../lib/stringScan");
 const { writeStringsExport } = require("../lib/stringsExport");
 const { writeReport, toPublicReport } = require("../lib/report");
+const { analyzeDeepLinks } = require("../lib/deepLinks");
+const { diffReports, writeDiff, countLine } = require("../lib/reportDiff");
 const { resolveDefaultOutputDir, isTermux } = require("../lib/outputPath");
 const { prepareInput, InputError } = require("../lib/apkInput");
 const { splitArgs } = require("../lib/shellSplit");
@@ -48,7 +50,7 @@ async function decompileCommand(apkPath, options) {
       logger.dim(`  ~/${apkPath}   (Termux symlink, needs termux-setup-storage)`);
       logger.dim(`  /${apkPath.replace(/^sdcard\//, "storage/emulated/0/")}   (absolute path)`);
     }
-    process.exitCode = 1;
+    process.exitCode = 2;
     return;
   }
 
@@ -113,7 +115,7 @@ async function decompileCommand(apkPath, options) {
   } catch (err) {
     if (!(err instanceof InputError)) throw err;
     logger.error(err.message);
-    process.exitCode = 1;
+    process.exitCode = 2;
     return;
   }
   if (input.note) (input.partial ? logger.warn : logger.info)(input.note);
@@ -127,46 +129,56 @@ async function decompileCommand(apkPath, options) {
   // there and still produce a full report.
   const resourceRoot = skipApktool ? path.join(jadxOut, "resources") : apktoolOut;
 
+  // apktool and jadx are independent once the input is prepared (and write to
+  // separate subdirs), so run them concurrently.
+  const EXIT_TOOL_FAILURE = 3;
+  const EXIT_PARTIAL_SUCCESS = 4;
+  const toolPromises = [];
   if (!skipApktool) {
     const spinner = spin("Running apktool (resources, manifest, smali)...").start();
-    try {
-      await runApktool(toolApk, apktoolOut, { noSrc: options.noSmali });
-      spinner.succeed("apktool decompile complete");
-    } catch (err) {
-      spinner.fail("apktool failed");
-      logger.error(err.shortMessage || err.message);
-      logger.dim("Run `apk-unravel doctor` to check your apktool installation.");
-      process.exitCode = 1;
-      return;
-    }
+    toolPromises.push(
+      runApktool(toolApk, apktoolOut, { noSrc: options.noSmali })
+        .then(() => spinner.succeed("apktool decompile complete"))
+        .catch((err) => {
+          spinner.fail("apktool failed");
+          throw Object.assign(err, { tool: "apktool" });
+        })
+    );
   } else {
     logger.dim("Skipping apktool (--jadx-only)");
   }
 
+  let jadxPartial = false;
   if (!skipJadx) {
     const spinner = spin("Running jadx (Java source decompile)...").start();
-    try {
-      const jadxResult = await runJadx(toolApk, jadxOut, {
+    toolPromises.push(
+      runJadx(toolApk, jadxOut, {
         deobfuscate: options.deobfuscate,
         extraArgs: jadxExtraArgs,
         javaOpts: options.jadxJavaOpts,
-      });
-      if (jadxResult.partial) {
-        spinner.warn("jadx finished with errors — some classes could not be decompiled (output kept)");
-        logger.dim(`  ${jadxResult.warning}`);
-      } else {
-        spinner.succeed("jadx decompile complete");
-      }
-    } catch (err) {
-      spinner.fail("jadx failed");
-      logger.error(err.shortMessage || err.message);
-      logger.dim("Run `apk-unravel doctor` to check your jadx installation.");
-      process.exitCode = 1;
-      return;
-    }
+      }).then((jadxResult) => {
+        if (jadxResult.partial) {
+          jadxPartial = true;
+          spinner.warn("jadx finished with errors — some classes could not be decompiled (output kept)");
+          logger.dim(`  ${jadxResult.warning}`);
+        } else {
+          spinner.succeed("jadx decompile complete");
+        }
+      })
+    );
   } else {
     logger.dim("Skipping jadx (--apktool-only)");
   }
+
+  try {
+    await Promise.all(toolPromises);
+  } catch (err) {
+    logger.error(err.shortMessage || err.message);
+    logger.dim(`Run \`apk-unravel doctor\` to check your ${err.tool || "tool"} installation.`);
+    process.exitCode = EXIT_TOOL_FAILURE;
+    return;
+  }
+  if (jadxPartial) process.exitCode = EXIT_PARTIAL_SUCCESS;
 
   let manifest = null;
   let appIdentity = null;
@@ -257,6 +269,20 @@ async function decompileCommand(apkPath, options) {
     }
   }
 
+  let deepLinkAnalysis = null;
+  if (options.deepLinkAnalysis && !skipJadx && manifest) {
+    const sourcesDir = path.join(jadxOut, "sources");
+    const spinner = spin("Analyzing deep-link handlers in decompiled source...").start();
+    try {
+      deepLinkAnalysis = await analyzeDeepLinks(manifest.deepLinks, sourcesDir);
+      const handled = deepLinkAnalysis.links.filter((l) => l.verdict === "reads-uri").length;
+      spinner.succeed(`Deep-link analysis — ${deepLinkAnalysis.analyzed} link(s), ${handled} appear to read the URI`);
+    } catch (err) {
+      spinner.fail("Deep-link analysis failed");
+      logger.dim(err.message);
+    }
+  }
+
   if (manifest) {
     const report = {
       apkFile: resolvedApk,
@@ -269,6 +295,7 @@ async function decompileCommand(apkPath, options) {
       appIdentity,
       stringScan,
       nativeLibs,
+      ...(deepLinkAnalysis ? { deepLinkAnalysis } : {}),
       manifestSource: skipApktool ? "jadx" : "apktool",
       outputPaths: {
         apktool: skipApktool ? null : apktoolOut,
@@ -277,6 +304,18 @@ async function decompileCommand(apkPath, options) {
     };
 
     const { jsonPath, mdPath } = await writeReport(report, outRoot);
+
+    if (options.diff) {
+      try {
+        const oldReport = await fs.readJson(path.resolve(options.diff));
+        const diff = diffReports(oldReport, report);
+        const { mdPath: diffPath } = await writeDiff(diff, report, outRoot);
+        logger.kv("Diff vs previous report", countLine(diff));
+        logger.dim(`  Diff written to ${diffPath}`);
+      } catch (err) {
+        logger.warn(`Could not diff against ${options.diff}: ${err.message}`);
+      }
+    }
 
     logger.section("Summary");
     logger.kv("App", appIdentity?.label || "—");
@@ -293,6 +332,11 @@ async function decompileCommand(apkPath, options) {
       for (const l of manifest.deepLinks) {
         const uri = `${l.scheme || "*"}://${l.host || "*"}${l.path || ""}`;
         logger.dim(`  ${l.reachable ? "⚠" : "·"} ${uri} → ${l.component}`);
+      }
+    }
+    if (deepLinkAnalysis) {
+      for (const l of deepLinkAnalysis.links) {
+        logger.dim(`    ↳ ${l.verdict}${l.classFound ? ` (${l.classFile})` : ""}`);
       }
     }
     logger.kv("Security flags", manifest.security.flags.length);

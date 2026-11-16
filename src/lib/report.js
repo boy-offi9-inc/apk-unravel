@@ -82,6 +82,29 @@ function renderMarkdown(report) {
   }
   lines.push("");
 
+  if (report.deepLinkAnalysis) {
+    lines.push(`### Deep-link handling (heuristic, \`--deep-link-analysis\`)`);
+    lines.push("");
+    if (report.deepLinkAnalysis.links.length) {
+      const VERDICT = {
+        "reads-uri": "✓ source reads the URI (`getData()`/`onNewIntent`)",
+        "reads-intent": "⚠ reads the intent but no `getData()`/`onNewIntent` found — the URI may be ignored",
+        "no-intent-read": "⚠ class exists but never reads the launching intent",
+        "class-not-found": "⚠ target class not found in decompiled sources",
+      };
+      lines.push(`| Component | URI pattern | Verdict |`);
+      lines.push(`| --- | --- | --- |`);
+      for (const l of report.deepLinkAnalysis.links) {
+        lines.push(`| \`${l.component}\` | \`${l.uri}\` | ${VERDICT[l.verdict] || l.verdict} |`);
+      }
+      lines.push("");
+      lines.push("_File-existence + regex heuristics over the matched class file only — a hint, not proof._");
+    } else {
+      lines.push("_No deep links to analyze._");
+    }
+    lines.push("");
+  }
+
   const exported = report.manifest.flaggedExported;
   const unguarded = report.manifest.unguardedExported;
   lines.push(
