@@ -11,7 +11,9 @@
 
 # apk-unravel
 
-A CLI that wraps [`apktool`](https://apktool.org) and [`jadx`](https://github.com/skylot/jadx) into a single decompile pipeline, then parses the result into a readable summary: package info, permissions flagged by risk, exported components, and an optional heuristic scan for URLs/potential secrets across the decompiled source.
+**One command, one report: see what an APK really does before you trust it.**
+
+`apk-unravel` wraps [`apktool`](https://apktool.org) and [`jadx`](https://github.com/skylot/jadx) into a single decompile pipeline, then parses the result into a readable summary — package info, permissions tiered by risk, exported components, deep links, native libraries, and an optional heuristic scan for URLs and potential secrets across the decompiled source.
 
 > "nothing is black box" 🙂
 
@@ -264,7 +266,6 @@ Custom rules are never run through the built-in placeholder filter — if you se
 - **`--jadx-args`** is split like a shell would, but never run through one. Flags that change jadx's output layout (`-d`, `-ds`, `-dr`, `-e`) are rejected.
 - "Exported" components are flagged based on an explicit `android:exported="true"` attribute *or* the presence of an `<intent-filter>` without an explicit `exported="false"` — a very common real-world misconfiguration worth a manual look.
 - Only analyze APKs you own or have explicit permission to inspect.
-
 - **`--jadx-only`** builds the same report as a full run: the manifest, app label/icon and native-lib scan are read from jadx's own decoded output (`jadx/resources/`) when apktool is skipped.
 - **jadx exits non-zero on partial failures.** If some classes can't be decompiled but jadx still wrote output, apk-unravel prints a warning and carries on instead of aborting. A run that produced nothing still fails.
 - Set `APK_UNRAVEL_DEBUG=1` to print a stack trace for unexpected errors.
