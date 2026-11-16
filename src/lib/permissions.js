@@ -63,6 +63,8 @@ const RUNTIME_PERMISSIONS = new Set([
   "android.permission.BLUETOOTH_SCAN",
   "android.permission.BLUETOOTH_ADVERTISE",
   "android.permission.NEARBY_WIFI_DEVICES",
+  // Android 14/15 additions (foreground service types gated by runtime grants)
+  "android.permission.FOREGROUND_SERVICES_HEALTH",
 ]);
 
 const SPECIAL_ACCESS_PERMISSIONS = new Set([
