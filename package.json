@@ -5,7 +5,7 @@
   "main": "src/index.js",
   "type": "commonjs",
   "bin": {
-    "apk-unravel": "./bin/apk-unravel.js"
+    "apk-unravel": "bin/apk-unravel.js"
   },
   "scripts": {
     "start": "node bin/apk-unravel.js",
@@ -39,5 +39,11 @@
     "fast-xml-parser": "^4.5.0",
     "fs-extra": "^11.2.0",
     "ora": "^5.4.1"
-  }
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ]
 }
